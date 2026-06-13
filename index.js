@@ -77,8 +77,6 @@ async function updateAnnouncementBoard() {
                 displayTitle = `[${month}/${day}] ${cleanedTitle}`;
 
                 // ================= 📅 [제목 날짜 기준 과거 글 판별] =================
-                // 1) 글의 월이 현재 월보다 작거나
-                // 2) 월은 같은데 글의 일이 현재 일보다 작은 경우 '과거 날짜'로 판단
                 if (month < currentMonth || (month === currentMonth && day < currentDay)) {
                     isPastDate = true;
                 }
@@ -97,7 +95,10 @@ async function updateAnnouncementBoard() {
             if (isPastDate) {
                 try {
                     console.log(`📦 날짜가 지난 게시글 발견(${match[1]}/${match[2]}), 보관 채널로 이동: ${title}`);
-                    await thread.setParent(ARCHIVE_FORUM_ID);
+                    
+                    // 디스코드 v14에 맞게 thread.edit을 사용하여 부모 채널을 변경합니다. 🛠️
+                    await thread.edit({ parentId: ARCHIVE_FORUM_ID });
+                    
                     continue; // 보관소로 이동했으므로 현황판 리스트 추가 안 하고 패스
                 } catch (moveError) {
                     console.error(`❌ 스레드 이동 중 오류 발생 (${title}):`, moveError);
@@ -106,11 +107,9 @@ async function updateAnnouncementBoard() {
             // ====================================================================
 
             // ================= 🕒 [진짜 NEW! 글만 판별하는 로직] =================
-            // 보관소로 이동되지 않고 살아남은 글들 중에서 '최근 24시간 이내'에 생성/수정된 글인지 체크합니다.
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
             const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
-            // 실제로 생성되거나 수정된 지 24시간이 지나지 않은 따끈따끈한 글에만 배지를 붙입니다.
             if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
                 displayTitle += " ⭐NEW!⭐";
             }
