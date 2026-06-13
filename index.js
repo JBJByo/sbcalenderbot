@@ -21,9 +21,10 @@ const client = new Client({
     ],
 });
 
-// 2. 내 서버에 맞게 수정해야 하는 ID 설정
-const FORUM_CHANNEL_ID = "1442443517313024100"; // 감시할 포럼(게시판) 채널 ID
-const TEXT_CHANNEL_ID = "1515045364045053952";  // 알림판 목록을 나열할 일반 텍스트 채널 ID
+// 2. 역할에 맞는 채널 ID 설정
+const MAIN_FORUM_ID = "1442443517313024100";     // 메인 포스팅 포럼 채널 ID
+const ARCHIVE_FORUM_ID = "1515419534318768159";  // 12시간 지난 포스팅을 옮겨서 보관할 포럼 채널 ID
+const ANNOUNCEMENT_TEXT_ID = "1515045364045053952"; // 로직을 통해 목록이 업데이트되는 현황판 텍스트 채널 ID
 
 // 3. 제목 처리를 위한 정규표현식 패턴
 const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
@@ -35,13 +36,13 @@ client.on('ready', async (c) => {
     await updateAnnouncementBoard();
 });
 
-// 핵심 로직: 기존 채널을 통째로 밀어버리고 새 현황판을 작성하는 함수
+// 핵심 로직: 기존 채널을 통째로 밀어버리고 새 현황판을 작성하는 함수 (+ 12시간 지난 글 자동 이동)
 async function updateAnnouncementBoard() {
     try {
-        const forumChannel = await client.channels.fetch(FORUM_CHANNEL_ID);
-        const textChannel = await client.channels.fetch(TEXT_CHANNEL_ID);
+        const mainForum = await client.channels.fetch(MAIN_FORUM_ID);
+        const textChannel = await client.channels.fetch(ANNOUNCEMENT_TEXT_ID);
 
-        if (!forumChannel || !textChannel) {
+        if (!mainForum || !textChannel) {
             console.log("❌ 채널 ID를 찾을 수 없습니다. ID 설정을 확인해주세요.");
             return;
         }
@@ -49,9 +50,34 @@ async function updateAnnouncementBoard() {
         const scheduleList = [];   
         const recruitingList = []; 
 
-        const activeThreads = await forumChannel.threads.fetchActive();
+        // 메인 포럼에서 활성화된 모든 스레드 가져오기
+        const activeThreads = await mainForum.threads.fetchActive();
+
+        const now = Date.now();                    
+        // 🕒 24시간에서 12시간(12 * 60 * 60 * 1000 밀리초)으로 기준 변경
+        const TWELVE_HOURS = 12 * 60 * 60 * 1000; 
 
         for (const [_, thread] of activeThreads.threads) {
+            // ================= 🕒 [12시간 지난 게시글 자동 이동 로직] =================
+            // 수정한 적이 있다면 editedTimestamp를, 없다면 최초 생성 시간을 기준으로 잡습니다.
+            const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp; 
+
+            // 만약 생성/수정된 지 12시간이 지났다면?
+            if (now - lastTouchTime >= TWELVE_HOURS) {
+                try {
+                    console.log(`📦 12시간이 지난 게시글 발견, 보관 채널로 이동 중: ${thread.name}`);
+                    
+                    // 스레드의 부모 채널(포럼)을 보관용 포럼 ID로 변경하여 이동시킵니다.
+                    await thread.setParent(ARCHIVE_FORUM_ID); 
+                    
+                    // 보관 채널로 이동된 스레드는 메인 현황판 목록에 나오지 않도록 패스합니다.
+                    continue; 
+                } catch (moveError) {
+                    console.error(`❌ 스레드 이동 중 오류 발생 (${thread.name}):`, moveError);
+                }
+            }
+            // ============================================================================
+
             const title = thread.name;
             const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
             
@@ -77,17 +103,8 @@ async function updateAnnouncementBoard() {
                 }
             }
 
-            // ================= 🕒 [2번 방식: 최근 수정 및 생성 기준 판별] =================
-            // 수정한 적이 있다면 editedTimestamp를, 없다면 최초 생성 시간을 기준으로 잡습니다.
-            const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp; 
-            const now = Date.now();                    
-            const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000; 
-
-            // 최근 24시간 이내에 생성되었거나 수정되었다면 배지 추가
-            if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
-                displayTitle += " ⭐NEW!⭐";
-            }
-            // ============================================================================
+            // 이동되지 않고 메인에 남은 글들은 모두 12시간 이내의 최신 글이므로 NEW 배지가 붙습니다.
+            displayTitle += " ⭐NEW!⭐";
 
             const postData = {
                 sortKey,
@@ -141,7 +158,7 @@ async function updateAnnouncementBoard() {
         }
         if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
 
-        // 🧹 2. [무조건 전체 청소] 채널 안의 모든 메시지를 예외 없이 싹 밀어버립니다.
+        // 🧹 2. 현황판 텍스트 채널 안의 모든 메시지를 싹 밀어버립니다.
         try {
             const fetched = await textChannel.messages.fetch({ limit: 100 });
             if (fetched.size > 0) {
@@ -150,10 +167,10 @@ async function updateAnnouncementBoard() {
                         await msg.delete().catch(() => {});
                     }
                 });
-                console.log(`🧹 채널 내 기존 메시지 ${fetched.size}개를 완전히 청소했습니다.`);
+                console.log(`🧹 현황판 채널 내 기존 메시지 ${fetched.size}개를 완전히 청소했습니다.`);
             }
         } catch (cleanError) {
-            console.error("🧹 채널 청소 중 오류 발생:", cleanError);
+            console.error("🧹 현황판 채널 청소 중 오류 발생:", cleanError);
         }
 
         // 📝 3. 텅 빈 채널에 새 현황판 깔끔하게 발송
@@ -170,18 +187,17 @@ async function updateAnnouncementBoard() {
 
 // 실시간 감시 이벤트 리스너들
 client.on('threadCreate', async (thread) => {
-    if (thread.parentId === FORUM_CHANNEL_ID) await updateAnnouncementBoard();
+    if (thread.parentId === MAIN_FORUM_ID) await updateAnnouncementBoard();
 });
 
 client.on('threadUpdate', async (before, after) => {
-    // 제목이 바뀌었거나 내용 수정 등으로 스레드가 업데이트되었을 때 실행
-    if (after.parentId === FORUM_CHANNEL_ID) {
+    if (after.parentId === MAIN_FORUM_ID) {
         await updateAnnouncementBoard();
     }
 });
 
 client.on('threadDelete', async (thread) => {
-    if (thread.parentId === FORUM_CHANNEL_ID) await updateAnnouncementBoard();
+    if (thread.parentId === MAIN_FORUM_ID) await updateAnnouncementBoard();
 });
 
 client.login(process.env.DISCORD_TOKEN);
