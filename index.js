@@ -1,9 +1,8 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
-const http = require('http'); // 👈 Render 속이기용 기본 HTTP 모듈 추가
+const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
-// Render와 UptimeRobot이 노크할 때 "나 안 자고 살아있어!"라고 대답해주는 문입니다.
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -36,7 +35,7 @@ client.on('ready', async (c) => {
     await updateAnnouncementBoard();
 });
 
-// 핵심 로직: 포럼 채널의 데이터를 모아서 텍스트 채널의 알림판을 갱신하는 함수
+// 핵심 로직: 2000자 제한을 넘겨도 여러 메시지로 쪼개서 수정(Edit)하는 함수
 async function updateAnnouncementBoard() {
     try {
         const forumChannel = await client.channels.fetch(FORUM_CHANNEL_ID);
@@ -91,9 +90,7 @@ async function updateAnnouncementBoard() {
         }
 
         const sortFunction = (a, b) => {
-            if (a.sortKey.month !== b.sortKey.month) {
-                return a.sortKey.month - b.sortKey.month;
-            }
+            if (a.sortKey.month !== b.sortKey.month) return a.sortKey.month - b.sortKey.month;
             return a.sortKey.day - b.sortKey.day;
         };
 
@@ -103,9 +100,7 @@ async function updateAnnouncementBoard() {
         const lines = ["📢 **실시간 포스팅 현황판** 📢\n"];
         lines.push("📌 **(일정)**");
         if (scheduleList.length > 0) {
-            scheduleList.forEach((post, i) => {
-                lines.push(`${i + 1}. ${post.text}`);
-            });
+            scheduleList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
         } else {
             lines.push("등록된 마감 일정이 없습니다.");
         }
@@ -114,39 +109,54 @@ async function updateAnnouncementBoard() {
 
         lines.push("🚀 **(모집중)**");
         if (recruitingList.length > 0) {
-            recruitingList.forEach((post, i) => {
-                lines.push(`${i + 1}. ${post.text}`);
-            });
+            recruitingList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
         } else {
             lines.push("모집 중인 포스팅이 없습니다.");
         }
 
-        const fetchedMessages = await textChannel.messages.fetch({ limit: 20 });
-        for (const [_, message] of fetchedMessages) {
-            if (message.author.id === client.user.id) {
-                await message.delete().catch(console.error);
-            }
-        }
-
-        const MAX_LENGTH = 1900;
+        // 📦 1. 2000자 안 넘게 청크(덩어리) 분할하기
+        const MAX_LENGTH = 1900; // 마진을 두어 1900자로 제한
+        const chunks = [];
         let currentChunk = "";
 
         for (const line of lines) {
             if ((currentChunk + line + "\n").length > MAX_LENGTH) {
-                if (currentChunk.trim().length > 0) {
-                    await textChannel.send(currentChunk.trim());
-                }
+                if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
                 currentChunk = line + "\n"; 
             } else {
                 currentChunk += line + "\n";
             }
         }
+        if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
 
-        if (currentChunk.trim().length > 0) {
-            await textChannel.send(currentChunk.trim());
+        // 🔍 2. 현재 채널에 있는 이 봇의 기존 메시지들 싹 다 가져오기 (작성 시간 순으로 정렬)
+        const fetchedMessages = await textChannel.messages.fetch({ limit: 50 });
+        const botMessages = [...fetchedMessages.values()]
+            .filter(msg => msg.author.id === client.user.id)
+            .sort((a, b) => a.createdTimestamp - b.createdTimestamp); // 오래된 글이 앞으로 오게 정렬
+
+        // 🔄 3. 쪼개진 청크 개수만큼 기존 메시지 수정하거나 새로 쓰기
+        for (let i = 0; i < chunks.length; i++) {
+            if (botMessages[i]) {
+                // 기존 메시지가 자리를 차지하고 있다면 덮어쓰기(Edit)
+                await botMessages[i].edit(chunks[i]);
+                console.log(`🔄 [${i + 1}/${chunks.length}] 기존 현황판 메시지를 수정했습니다.`);
+            } else {
+                // 기존 메시지 개수가 모자란다면 새로 생성(Send)
+                await textChannel.send(chunks[i]);
+                console.log(`📝 [${i + 1}/${chunks.length}] 새로운 현황판 메시지를 추가했습니다.`);
+            }
         }
 
-        console.log("✅ 현황판 갱신 완료!");
+        // 🧹 4. 찌꺼기 메시지 삭제 (예: 이전에 3칸 썼는데 일정이 줄어들어 지금은 2칸만 필요할 때, 남은 1칸 삭제)
+        if (botMessages.length > chunks.length) {
+            for (let i = chunks.length; i < botMessages.length; i++) {
+                await botMessages[i].delete().catch(console.error);
+                console.log(`🧹 불필요해진 기존 남은 현황판 메시지를 삭제했습니다.`);
+            }
+        }
+
+        console.log("✅ 대용량 대응 현황판 갱신 완료!");
 
     } catch (error) {
         console.error("현황판 갱신 중 오류 발생:", error);
