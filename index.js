@@ -23,7 +23,7 @@ const client = new Client({
 
 // 2. 역할에 맞는 채널 ID 설정
 const MAIN_FORUM_ID = "1442443517313024100";     // 메인 포스팅 포럼 채널 ID
-const ARCHIVE_FORUM_ID = "1515419534318768159";  // 12시간 지난 포스팅을 옮겨서 보관할 포럼 채널 ID
+const ARCHIVE_FORUM_ID = "1515419534318768159";  // 기한 지난 포스팅을 옮겨서 보관할 포럼 채널 ID
 const ANNOUNCEMENT_TEXT_ID = "1515045364045053952"; // 로직을 통해 목록이 업데이트되는 현황판 텍스트 채널 ID
 
 // 3. 제목 처리를 위한 정규표현식 패턴
@@ -36,7 +36,7 @@ client.on('ready', async (c) => {
     await updateAnnouncementBoard();
 });
 
-// 핵심 로직: 기존 채널을 통째로 밀어버리고 새 현황판을 작성하는 함수 (+ 12시간 지난 글 자동 이동)
+// 핵심 로직: 기존 채널을 통째로 밀어버리고 새 현황판을 작성하는 함수 (+ 날짜 지난 글 자동 이동)
 async function updateAnnouncementBoard() {
     try {
         const mainForum = await client.channels.fetch(MAIN_FORUM_ID);
@@ -53,39 +53,20 @@ async function updateAnnouncementBoard() {
         // 메인 포럼에서 활성화된 모든 스레드 가져오기
         const activeThreads = await mainForum.threads.fetchActive();
 
-        const now = Date.now();                    
-        // 🕒 24시간에서 12시간(12 * 60 * 60 * 1000 밀리초)으로 기준 변경
-        const TWELVE_HOURS = 12 * 60 * 60 * 1000; 
+        // 📅 현재 한국 시간 기준의 오늘 월/일 구하기
+        const nowKst = new Date(new Date().getTime() + (9 * 60 * 60 * 1000)); 
+        const currentMonth = nowKst.getUTCMonth() + 1;
+        const currentDay = nowKst.getUTCDate();
 
         for (const [_, thread] of activeThreads.threads) {
-            // ================= 🕒 [12시간 지난 게시글 자동 이동 로직] =================
-            // 수정한 적이 있다면 editedTimestamp를, 없다면 최초 생성 시간을 기준으로 잡습니다.
-            const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp; 
-
-            // 만약 생성/수정된 지 12시간이 지났다면?
-            if (now - lastTouchTime >= TWELVE_HOURS) {
-                try {
-                    console.log(`📦 12시간이 지난 게시글 발견, 보관 채널로 이동 중: ${thread.name}`);
-                    
-                    // 스레드의 부모 채널(포럼)을 보관용 포럼 ID로 변경하여 이동시킵니다.
-                    await thread.setParent(ARCHIVE_FORUM_ID); 
-                    
-                    // 보관 채널로 이동된 스레드는 메인 현황판 목록에 나오지 않도록 패스합니다.
-                    continue; 
-                } catch (moveError) {
-                    console.error(`❌ 스레드 이동 중 오류 발생 (${thread.name}):`, moveError);
-                }
-            }
-            // ============================================================================
-
             const title = thread.name;
-            const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
+            const match = title.match(DATE_PATTERN);
             
             let sortKey;
             let displayTitle;
+            let isPastDate = false;
 
             let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '').replace(/\s+/g, ' ').trim();
-            const match = title.match(DATE_PATTERN);
             
             if (match) {
                 const month = parseInt(match[1], 10);
@@ -93,7 +74,15 @@ async function updateAnnouncementBoard() {
                 sortKey = { month, day, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
                 displayTitle = `[${month}/${day}] ${cleanedTitle}`;
+
+                // ================= 📅 [제목 날짜 기준 과거 글 판별] =================
+                // 1) 글의 월이 현재 월보다 작거나
+                // 2) 월은 같은데 글의 일이 현재 일보다 작은 경우 '과거 날짜'로 판단
+                if (month < currentMonth || (month === currentMonth && day < currentDay)) {
+                    isPastDate = true;
+                }
             } else {
+                // 날짜가 없는 글([일협] 등)은 날짜 비교에서 제외하고 뒤로 정렬
                 if (title.includes("일협")) {
                     sortKey = { month: 98, day: 98, isIlhyeop: true }; 
                     displayTitle = `(일협) ${cleanedTitle}`;
@@ -103,9 +92,22 @@ async function updateAnnouncementBoard() {
                 }
             }
 
-            // 이동되지 않고 메인에 남은 글들은 모두 12시간 이내의 최신 글이므로 NEW 배지가 붙습니다.
+            // ================= 📦 [과거 글 자동 보관소 이동] =================
+            if (isPastDate) {
+                try {
+                    console.log(`📦 날짜가 지난 게시글 발견(${match[1]}/${match[2]}), 보관 채널로 이동: ${title}`);
+                    await thread.setParent(ARCHIVE_FORUM_ID);
+                    continue; // 이동했으므로 현황판 리스트 추가 안 하고 패스
+                } catch (moveError) {
+                    console.error(`❌ 스레드 이동 중 오류 발생 (${title}):`, moveError);
+                }
+            }
+            // ====================================================================
+
+            // 오늘이거나 미래의 날짜인 최신 글들에만 NEW 배지 부여
             displayTitle += " ⭐NEW!⭐";
 
+            const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
             const postData = {
                 sortKey,
                 text: `${displayTitle} ([바로가기](${url}))`
