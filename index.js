@@ -11,8 +11,8 @@ const client = new Client({
 
 // 환경 변수 설정
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const FORUM_CHANNEL_ID = '여기에_포럼_채널_ID를_입력하세요';
-const TEXT_CHANNEL_ID = '여기에_현황판_텍스트_채널_ID를_입력하세요';
+const FORUM_CHANNEL_ID = '1442443517313024100';
+const TEXT_CHANNEL_ID = '1515045364045053952';
 
 // 타이틀 정제를 위한 정규식 패턴 설정
 const DATE_PATTERN = /\[(\d{1,2})[./](\d{1,2})\]/; // [월/일] 또는 [월.일] 형태 매칭
