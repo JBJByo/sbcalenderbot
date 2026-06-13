@@ -77,6 +77,17 @@ async function updateAnnouncementBoard() {
                 }
             }
 
+            // ================= 🕒 [최근 24시간 이내 신규 글 체크 로직 추가] =================
+            const createdAt = thread.createdTimestamp; // 스레드 생성 시간 (밀리초)
+            const now = Date.now();                    // 현재 시간 (밀리초)
+            const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000; // 24시간을 밀리초로 환산
+
+            // 생성된 지 24시간이 지나지 않았다면 제목 뒤에 한 칸 띄우고 ⭐NEW!⭐ 배지 추가
+            if (now - createdAt < TWENTY_FOUR_HOURS) {
+                displayTitle += " ⭐NEW!⭐";
+            }
+            // ============================================================================
+
             const postData = {
                 sortKey,
                 text: `${displayTitle} ([바로가기](${url}))`
