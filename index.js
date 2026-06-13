@@ -77,13 +77,14 @@ async function updateAnnouncementBoard() {
                 }
             }
 
-            // ================= 🕒 [최근 24시간 이내 신규 글 체크 로직 추가] =================
-            const createdAt = thread.createdTimestamp; // 스레드 생성 시간 (밀리초)
-            const now = Date.now();                    // 현재 시간 (밀리초)
-            const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000; // 24시간을 밀리초로 환산
+            // ================= 🕒 [2번 방식: 최근 수정 및 생성 기준 판별] =================
+            // 수정한 적이 있다면 editedTimestamp를, 없다면 최초 생성 시간을 기준으로 잡습니다.
+            const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp; 
+            const now = Date.now();                    
+            const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000; 
 
-            // 생성된 지 24시간이 지나지 않았다면 제목 뒤에 한 칸 띄우고 ⭐NEW!⭐ 배지 추가
-            if (now - createdAt < TWENTY_FOUR_HOURS) {
+            // 최근 24시간 이내에 생성되었거나 수정되었다면 배지 추가
+            if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
                 displayTitle += " ⭐NEW!⭐";
             }
             // ============================================================================
@@ -173,7 +174,8 @@ client.on('threadCreate', async (thread) => {
 });
 
 client.on('threadUpdate', async (before, after) => {
-    if (after.parentId === FORUM_CHANNEL_ID && before.name !== after.name) {
+    // 제목이 바뀌었거나 내용 수정 등으로 스레드가 업데이트되었을 때 실행
+    if (after.parentId === FORUM_CHANNEL_ID) {
         await updateAnnouncementBoard();
     }
 });
