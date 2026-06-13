@@ -21,9 +21,8 @@ const client = new Client({
     ],
 });
 
-// 2. 역할에 맞는 채널 ID 설정
+// 2. 역할에 맞는 채널 ID 설정 (메인 포럼과 현황판 텍스트 채널만 유지)
 const MAIN_FORUM_ID = "1442443517313024100";     // 메인 포스팅 포럼 채널 ID
-const ARCHIVE_FORUM_ID = "1515419534318768159";  // 기한 지난 포스팅을 옮겨서 보관할 포럼 채널 ID
 const ANNOUNCEMENT_TEXT_ID = "1515045364045053952"; // 로직을 통해 목록이 업데이트되는 현황판 텍스트 채널 ID
 
 // 3. 제목 처리를 위한 정규표현식 패턴
@@ -36,7 +35,7 @@ client.on('ready', async (c) => {
     await updateAnnouncementBoard();
 });
 
-// 핵심 로직: 기존 채널을 통째로 밀어버리고 새 현황판을 작성하는 함수 (+ 날짜 지난 글 자동 이동 & 진짜 NEW 판별)
+// 핵심 로직: 기존 채널을 통째로 밀어버리고 새 현황판을 작성하는 함수 (이동/삭제 기능 완전 제거)
 async function updateAnnouncementBoard() {
     try {
         const mainForum = await client.channels.fetch(MAIN_FORUM_ID);
@@ -52,22 +51,17 @@ async function updateAnnouncementBoard() {
 
         // 메인 포럼에서 활성화된 모든 스레드 가져오기
         const activeThreads = await mainForum.threads.fetchActive();
-
-        // 📅 현재 한국 시간 기준의 오늘 월/일 구하기
         const now = Date.now();
-        const nowKst = new Date(now + (9 * 60 * 60 * 1000)); 
-        const currentMonth = nowKst.getUTCMonth() + 1;
-        const currentDay = nowKst.getUTCDate();
 
         for (const [_, thread] of activeThreads.threads) {
             const title = thread.name;
-            const match = title.match(DATE_PATTERN);
+            const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
             
             let sortKey;
             let displayTitle;
-            let isPastDate = false;
 
             let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '').replace(/\s+/g, ' ').trim();
+            const match = title.match(DATE_PATTERN);
             
             if (match) {
                 const month = parseInt(match[1], 10);
@@ -75,13 +69,7 @@ async function updateAnnouncementBoard() {
                 sortKey = { month, day, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
                 displayTitle = `[${month}/${day}] ${cleanedTitle}`;
-
-                // ================= 📅 [제목 날짜 기준 과거 글 판별] =================
-                if (month < currentMonth || (month === currentMonth && day < currentDay)) {
-                    isPastDate = true;
-                }
             } else {
-                // 날짜가 없는 글([일협] 등)은 날짜 비교에서 제외하고 뒤로 정렬
                 if (title.includes("일협")) {
                     sortKey = { month: 98, day: 98, isIlhyeop: true }; 
                     displayTitle = `(일협) ${cleanedTitle}`;
@@ -91,31 +79,17 @@ async function updateAnnouncementBoard() {
                 }
             }
 
-            // ================= 📦 [과거 글 자동 보관소 이동] =================
-            if (isPastDate) {
-                try {
-                    console.log(`📦 날짜가 지난 게시글 발견(${match[1]}/${match[2]}), 보관 채널로 이동: ${title}`);
-                    
-                    // 디스코드 v14에 맞게 thread.edit을 사용하여 부모 채널을 변경합니다. 🛠️
-                    await thread.edit({ parentId: ARCHIVE_FORUM_ID });
-                    
-                    continue; // 보관소로 이동했으므로 현황판 리스트 추가 안 하고 패스
-                } catch (moveError) {
-                    console.error(`❌ 스레드 이동 중 오류 발생 (${title}):`, moveError);
-                }
-            }
-            // ====================================================================
-
             // ================= 🕒 [진짜 NEW! 글만 판별하는 로직] =================
+            // 최근 24시간 이내에 생성되었거나 본문이 수정된 글인지 체크합니다.
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
             const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
+            // 24시간 이내의 글에만 제목 뒤에 한 칸 띄우고 배지를 붙입니다.
             if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
                 displayTitle += " ⭐NEW!⭐";
             }
             // ============================================================================
 
-            const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
             const postData = {
                 sortKey,
                 text: `${displayTitle} ([바로가기](${url}))`
