@@ -1,38 +1,56 @@
-require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
-const http = require('http');
+require('dotenv').config();
 
-// ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
-const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('🤖 디스코드 봇이 정상 구동 중입니다!');
-}).listen(PORT, () => {
-    console.log(`🌐 가짜 웹 서버가 ${PORT}번 포트에서 작동 중입니다. (Render 우회용)`);
-});
-// ====================================================================
-
-// 1. 봇의 기본 권한(Intents) 설정
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-    ],
+        GatewayIntentBits.MessageContent
+    ]
 });
 
-// 2. 내 서버에 맞게 수정해야 하는 ID 설정
-const FORUM_CHANNEL_ID = "1442443517313024100"; // 감시할 포럼(게시판) 채널 ID
-const TEXT_CHANNEL_ID = "1515045364045053952";  // 알림판 목록을 나열할 일반 텍스트 채널 ID
+// 환경 변수 설정
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const FORUM_CHANNEL_ID = '여기에_포럼_채널_ID를_입력하세요';
+const TEXT_CHANNEL_ID = '여기에_현황판_텍스트_채널_ID를_입력하세요';
 
-// 3. 제목 처리를 위한 정규표현식 패턴
-const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
-const MARAM_PATTERN = /[(\[][\s]*마감[\s]*[)\]]|마감/g; 
-const ILHYEOP_PATTERN = /[(\[][\s]*일협[\s]*[)\]]|일협/g; 
+// 타이틀 정제를 위한 정규식 패턴 설정
+const DATE_PATTERN = /\[(\d{1,2})[./](\d{1,2})\]/; // [월/일] 또는 [월.일] 형태 매칭
+const MARAM_PATTERN = /\[마감\]/g;
+const ILHYEOP_PATTERN = /\[일협\]/g;
 
-client.on('ready', async (c) => {
-    console.log(`🤖 ${c.user.tag} 봇이 성공적으로 로그인했습니다!`);
-    await updateAnnouncementBoard();
+// 봇이 준비되었을 때 실행
+client.once('ready', () => {
+    console.log(`🤖 봇이 로그인되었습니다: ${client.user.tag}`);
+    // 봇이 켜지자마자 한 번 현황판을 동기화합니다.
+    updateAnnouncementBoard();
+});
+
+// 포럼에서 새로운 스레드(게시글)가 생성되었을 때
+client.on('threadCreate', async (thread) => {
+    if (thread.parentId === FORUM_CHANNEL_ID) {
+        console.log(`🆕 새 스레드 감지: ${thread.name}`);
+        await updateAnnouncementBoard();
+    }
+});
+
+// 포럼 게시글 제목이 수정되거나 마감 태그 등이 변경되었을 때
+client.on('threadUpdate', async (oldThread, newThread) => {
+    if (newThread.parentId === FORUM_CHANNEL_ID) {
+        // 제목이 바뀌었거나 아카이브 상태가 바뀌었다면 갱신
+        if (oldThread.name !== newThread.name || oldThread.archived !== newThread.archived) {
+            console.log(`🔄 스레드 상태 변경 감지: ${newThread.name}`);
+            await updateAnnouncementBoard();
+        }
+    }
+});
+
+// 포럼 게시글이 삭제되었을 때
+client.on('threadDelete', async (thread) => {
+    if (thread.parentId === FORUM_CHANNEL_ID) {
+        console.log(`🗑️ 스레드 삭제 감지: ${thread.name}`);
+        await updateAnnouncementBoard();
+    }
 });
 
 // 핵심 로직: 기존 채널을 통째로 밀어버리고 새 현황판을 작성하는 함수
@@ -49,8 +67,10 @@ async function updateAnnouncementBoard() {
         const scheduleList = [];   
         const recruitingList = []; 
 
+        // 1. 활성화된 모든 포럼 스레드 가져오기
         const activeThreads = await forumChannel.threads.fetchActive();
 
+        // 2. 각 스레드를 순회하며 데이터 정제 및 NEW 배지 판별
         for (const [_, thread] of activeThreads.threads) {
             const title = thread.name;
             const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
@@ -82,7 +102,7 @@ async function updateAnnouncementBoard() {
             const now = Date.now();                    // 현재 시간 (ms)
             const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000; // 24시간을 밀리초로 환산
 
-            // 생성된 지 24시간이 지나지 않았다면 제목 뒤에 한 칸 띄우고 붙이기
+            // 생성된 지 24시간이 지나지 않았다면 제목 뒤에 한 칸 띄우고 ⭐NEW!⭐ 붙이기
             if (now - createdAt < TWENTY_FOUR_HOURS) {
                 displayTitle += " ⭐NEW!⭐";
             }
@@ -93,6 +113,7 @@ async function updateAnnouncementBoard() {
                 text: `${displayTitle} ([바로가기](${url}))`
             };
 
+            // 마감 여부에 따라 배열 분기 처리
             if (title.includes("마감")) {
                 scheduleList.push(postData);
             } else {
@@ -100,6 +121,7 @@ async function updateAnnouncementBoard() {
             }
         }
 
+        // 날짜 순 정렬 함수 (월 -> 일 순서)
         const sortFunction = (a, b) => {
             if (a.sortKey.month !== b.sortKey.month) return a.sortKey.month - b.sortKey.month;
             return a.sortKey.day - b.sortKey.day;
@@ -108,6 +130,7 @@ async function updateAnnouncementBoard() {
         scheduleList.sort(sortFunction);
         recruitingList.sort(sortFunction);
 
+        // 출력할 메시지 텍스트 조립
         const lines = ["📢 **실시간 포스팅 현황판** 📢\n"];
         lines.push("📌 **(일정)**");
         if (scheduleList.length > 0) {
@@ -125,7 +148,7 @@ async function updateAnnouncementBoard() {
             lines.push("모집 중인 포스팅이 없습니다.");
         }
 
-        // 📦 1. 2000자 안 넘게 청크(덩어리) 분할하기
+        // 📦 3. 디스코드 글자수 제한(2000자) 우회를 위한 청크 분할
         const MAX_LENGTH = 1900;
         const chunks = [];
         let currentChunk = "";
@@ -140,7 +163,7 @@ async function updateAnnouncementBoard() {
         }
         if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
 
-        // 🧹 2. [무조건 전체 청소] 채널 안의 모든 메시지를 예외 없이 싹 밀어버립니다.
+        // 🧹 4. 채널 내 기존 현황판 메시지 싹 청소하기
         try {
             const fetched = await textChannel.messages.fetch({ limit: 100 });
             if (fetched.size > 0) {
@@ -155,7 +178,7 @@ async function updateAnnouncementBoard() {
             console.error("🧹 채널 청소 중 오류 발생:", cleanError);
         }
 
-        // 📝 3. 텅 빈 채널에 새 현황판 깔끔하게 발송
+        // 📝 5. 새로 정리된 현황판 순차 발송
         for (const chunk of chunks) {
             await textChannel.send(chunk);
         }
@@ -167,19 +190,5 @@ async function updateAnnouncementBoard() {
     }
 }
 
-// 실시간 감시 이벤트 리스너들
-client.on('threadCreate', async (thread) => {
-    if (thread.parentId === FORUM_CHANNEL_ID) await updateAnnouncementBoard();
-});
-
-client.on('threadUpdate', async (before, after) => {
-    if (after.parentId === FORUM_CHANNEL_ID && before.name !== after.name) {
-        await updateAnnouncementBoard();
-    }
-});
-
-client.on('threadDelete', async (thread) => {
-    if (thread.parentId === FORUM_CHANNEL_ID) await updateAnnouncementBoard();
-});
-
-client.login(process.env.DISCORD_TOKEN);
+// 디스코드 로그인
+client.login(DISCORD_TOKEN);
