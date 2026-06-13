@@ -35,7 +35,7 @@ client.on('ready', async (c) => {
     await updateAnnouncementBoard();
 });
 
-// 핵심 로직: 2000자 제한을 넘겨도 여러 메시지로 쪼개서 수정(Edit)하는 함수
+// 핵심 로직: 기존 봇 메시지를 싹 청소하고 새 메시지로 깔끔하게 올리는 함수
 async function updateAnnouncementBoard() {
     try {
         const forumChannel = await client.channels.fetch(FORUM_CHANNEL_ID);
@@ -115,7 +115,7 @@ async function updateAnnouncementBoard() {
         }
 
         // 📦 1. 2000자 안 넘게 청크(덩어리) 분할하기
-        const MAX_LENGTH = 1900; // 마진을 두어 1900자로 제한
+        const MAX_LENGTH = 1900;
         const chunks = [];
         let currentChunk = "";
 
@@ -129,34 +129,20 @@ async function updateAnnouncementBoard() {
         }
         if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
 
-        // 🔍 2. 현재 채널에 있는 이 봇의 기존 메시지들 싹 다 가져오기 (작성 시간 순으로 정렬)
-        const fetchedMessages = await textChannel.messages.fetch({ limit: 50 });
-        const botMessages = [...fetchedMessages.values()]
-            .filter(msg => msg.author.id === client.user.id)
-            .sort((a, b) => a.createdTimestamp - b.createdTimestamp); // 오래된 글이 앞으로 오게 정렬
-
-        // 🔄 3. 쪼개진 청크 개수만큼 기존 메시지 수정하거나 새로 쓰기
-        for (let i = 0; i < chunks.length; i++) {
-            if (botMessages[i]) {
-                // 기존 메시지가 자리를 차지하고 있다면 덮어쓰기(Edit)
-                await botMessages[i].edit(chunks[i]);
-                console.log(`🔄 [${i + 1}/${chunks.length}] 기존 현황판 메시지를 수정했습니다.`);
-            } else {
-                // 기존 메시지 개수가 모자란다면 새로 생성(Send)
-                await textChannel.send(chunks[i]);
-                console.log(`📝 [${i + 1}/${chunks.length}] 새로운 현황판 메시지를 추가했습니다.`);
-            }
+        // 🧹 2. [무조건 청소 구역] 채널에 남아있는 이 봇의 메시지를 '개수 제한 없이' 모조리 찾아서 지웁니다.
+        const fetchedMessages = await textChannel.messages.fetch({ limit: 100 });
+        const botMessages = [...fetchedMessages.values()].filter(msg => msg.author.id === client.user.id);
+        
+        for (const msg of botMessages) {
+            await msg.delete().catch(console.error);
         }
 
-        // 🧹 4. 찌꺼기 메시지 삭제 (예: 이전에 3칸 썼는데 일정이 줄어들어 지금은 2칸만 필요할 때, 남은 1칸 삭제)
-        if (botMessages.length > chunks.length) {
-            for (let i = chunks.length; i < botMessages.length; i++) {
-                await botMessages[i].delete().catch(console.error);
-                console.log(`🧹 불필요해진 기존 남은 현황판 메시지를 삭제했습니다.`);
-            }
+        // 📝 3. 청소가 완벽히 끝난 빈 채널에 새 글을 완전히 새로 발송 (수정됨 표시 절대 안 뜸)
+        for (const chunk of chunks) {
+            await textChannel.send(chunk);
         }
 
-        console.log("✅ 대용량 대응 현황판 갱신 완료!");
+        console.log("✅ (수정됨) 표시 없는 새 현황판 깔끔 갱신 완료!");
 
     } catch (error) {
         console.error("현황판 갱신 중 오류 발생:", error);
