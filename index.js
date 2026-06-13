@@ -36,7 +36,7 @@ client.on('ready', async (c) => {
     await updateAnnouncementBoard();
 });
 
-// 핵심 로직: 기존 채널을 통째로 밀어버리고 새 현황판을 작성하는 함수 (+ 날짜 지난 글 자동 이동)
+// 핵심 로직: 기존 채널을 통째로 밀어버리고 새 현황판을 작성하는 함수 (+ 날짜 지난 글 자동 이동 & 진짜 NEW 판별)
 async function updateAnnouncementBoard() {
     try {
         const mainForum = await client.channels.fetch(MAIN_FORUM_ID);
@@ -54,7 +54,8 @@ async function updateAnnouncementBoard() {
         const activeThreads = await mainForum.threads.fetchActive();
 
         // 📅 현재 한국 시간 기준의 오늘 월/일 구하기
-        const nowKst = new Date(new Date().getTime() + (9 * 60 * 60 * 1000)); 
+        const now = Date.now();
+        const nowKst = new Date(now + (9 * 60 * 60 * 1000)); 
         const currentMonth = nowKst.getUTCMonth() + 1;
         const currentDay = nowKst.getUTCDate();
 
@@ -97,15 +98,23 @@ async function updateAnnouncementBoard() {
                 try {
                     console.log(`📦 날짜가 지난 게시글 발견(${match[1]}/${match[2]}), 보관 채널로 이동: ${title}`);
                     await thread.setParent(ARCHIVE_FORUM_ID);
-                    continue; // 이동했으므로 현황판 리스트 추가 안 하고 패스
+                    continue; // 보관소로 이동했으므로 현황판 리스트 추가 안 하고 패스
                 } catch (moveError) {
                     console.error(`❌ 스레드 이동 중 오류 발생 (${title}):`, moveError);
                 }
             }
             // ====================================================================
 
-            // 오늘이거나 미래의 날짜인 최신 글들에만 NEW 배지 부여
-            displayTitle += " ⭐NEW!⭐";
+            // ================= 🕒 [진짜 NEW! 글만 판별하는 로직] =================
+            // 보관소로 이동되지 않고 살아남은 글들 중에서 '최근 24시간 이내'에 생성/수정된 글인지 체크합니다.
+            const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
+            const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+            // 실제로 생성되거나 수정된 지 24시간이 지나지 않은 따끈따끈한 글에만 배지를 붙입니다.
+            if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
+                displayTitle += " ⭐NEW!⭐";
+            }
+            // ============================================================================
 
             const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
             const postData = {
