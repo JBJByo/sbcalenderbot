@@ -55,6 +55,9 @@ async function updateAnnouncementBoard() {
 
         for (const [_, thread] of activeThreads.threads) {
             const title = thread.name;
+            if (title.includes("펑")) {
+                  continue; 
+            }
             const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
             
             let sortKey;
@@ -95,7 +98,7 @@ async function updateAnnouncementBoard() {
                 text: `${displayTitle} ([바로가기](${url}))`
             };
 
-            if (title.includes("마감")) {
+            if (title.includes("마감") || title.includes("꽉")) {
                 scheduleList.push(postData);
             } else {
                 recruitingList.push(postData);
