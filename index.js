@@ -149,34 +149,34 @@ async function updateAnnouncementBoard() {
         // --- 머미 파트 ---
         lines.push("### 🩸 머미 마감 일정");
         if (murderScheduleList.length > 0) {
-            murderScheduleList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            murderScheduleList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("> *등록된 머미 마감 일정이 없습니다.* 🥲");
+            lines.push("*등록된 머미 마감 일정이 없습니다.* 🥲");
         }
         lines.push("\n"); 
 
         lines.push("### 🔎 머미 모집 중");
         if (murderRecruitingList.length > 0) {
-            murderRecruitingList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            murderRecruitingList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("> *모집 중인 머미 포스팅이 없습니다.* 👀");
+            lines.push("*모집 중인 머미 포스팅이 없습니다.* 👀");
         }
         lines.push("\n");
 
         // --- 기타 모집 파트 ---
         lines.push("### 📌 기타 모집 완료");
         if (otherScheduleList.length > 0) {
-            otherScheduleList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            otherScheduleList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("> *등록된 기타 완료 일정이 없습니다.*");
+            lines.push("*등록된 기타 완료 일정이 없습니다.*");
         }
         lines.push("\n"); 
 
         lines.push("### 🚀 기타 모집 중");
         if (otherRecruitingList.length > 0) {
-            otherRecruitingList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            otherRecruitingList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("> *모집 중인 기타 포스팅이 없습니다.*");
+            lines.push("*모집 중인 기타 포스팅이 없습니다.*");
         }
 
         // 📦 1. 2000자 안 넘게 청크(덩어리) 분할하기
