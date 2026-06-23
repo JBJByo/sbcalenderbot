@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
@@ -46,10 +46,8 @@ async function updateAnnouncementBoard() {
             return;
         }
 
-        // 머미용 배열
         const murderScheduleList = [];   
         const murderRecruitingList = []; 
-        // 기타 모집용 배열
         const otherScheduleList = [];
         const otherRecruitingList = [];
 
@@ -83,14 +81,12 @@ async function updateAnnouncementBoard() {
                 }
             }
 
-            // ================= 🕒 [진짜 NEW! 글만 판별하는 로직] =================
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
             const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
             if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
                 displayTitle += " ⭐NEW!⭐";
             }
-            // ============================================================================
 
             const postData = {
                 sortKey,
@@ -142,50 +138,50 @@ async function updateAnnouncementBoard() {
         otherRecruitingList.sort(sortFunction);
 
         // ==========================================
-        // 🎨 디자인이 적용된 현황판 텍스트 구성 시작
+        // 🎨 본문(Description)에 들어갈 내용 구성
         // ==========================================
-        const lines = ["# 📢 실시간 포스팅 현황판\n"];
+        const lines = [];
         
         // --- 머미 파트 ---
-        lines.push("### 🩸 머미 일정");
+        lines.push("### 🩸 머미 마감 일정");
         if (murderScheduleList.length > 0) {
-            murderScheduleList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            murderScheduleList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("> *등록된 머미 마감 일정이 없습니다.* 🥲");
+            lines.push("*등록된 머미 마감 일정이 없습니다.* 🥲");
         }
         lines.push("\n"); 
 
         lines.push("### 🔎 머미 모집 중");
         if (murderRecruitingList.length > 0) {
-            murderRecruitingList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            murderRecruitingList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("> *모집 중인 머미 포스팅이 없습니다.* 👀");
+            lines.push("*모집 중인 머미 포스팅이 없습니다.* 👀");
         }
         lines.push("\n");
 
         // --- 기타 모집 파트 ---
-        lines.push("### 📌 기타 일정");
+        lines.push("### 📌 기타 모집 완료");
         if (otherScheduleList.length > 0) {
-            otherScheduleList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            otherScheduleList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("> *등록된 기타 완료 일정이 없습니다.*");
+            lines.push("*등록된 기타 완료 일정이 없습니다.*");
         }
         lines.push("\n"); 
 
         lines.push("### 🚀 기타 모집 중");
         if (otherRecruitingList.length > 0) {
-            otherRecruitingList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            otherRecruitingList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("> *모집 중인 기타 포스팅이 없습니다.*");
+            lines.push("*모집 중인 기타 포스팅이 없습니다.*");
         }
 
-        // 📦 1. 2000자 안 넘게 청크(덩어리) 분할하기
-        const MAX_LENGTH = 1900;
+        // 임베드의 설명란(Description) 한도는 4096자이므로 4000자로 청크 분할
+        const MAX_EMBED_LENGTH = 4000;
         const chunks = [];
         let currentChunk = "";
 
         for (const line of lines) {
-            if ((currentChunk + line + "\n").length > MAX_LENGTH) {
+            if ((currentChunk + line + "\n").length > MAX_EMBED_LENGTH) {
                 if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
                 currentChunk = line + "\n"; 
             } else {
@@ -194,46 +190,6 @@ async function updateAnnouncementBoard() {
         }
         if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
 
-        // 🧹 2. 현황판 텍스트 채널 안의 모든 메시지를 싹 밀어버립니다.
+        // 🧹 채널 청소
         try {
-            const fetched = await textChannel.messages.fetch({ limit: 100 });
-            if (fetched.size > 0) {
-                await textChannel.bulkDelete(fetched).catch(async () => {
-                    for (const msg of fetched.values()) {
-                        await msg.delete().catch(() => {});
-                    }
-                });
-                console.log(`🧹 현황판 채널 내 기존 메시지 ${fetched.size}개를 완전히 청소했습니다.`);
-            }
-        } catch (cleanError) {
-            console.error("🧹 현황판 채널 청소 중 오류 발생:", cleanError);
-        }
-
-        // 📝 3. 텅 빈 채널에 새 현황판 깔끔하게 발송
-        for (const chunk of chunks) {
-            await textChannel.send(chunk);
-        }
-
-        console.log("✅ 중복 없는 새 현황판 완벽 갱신 완료!");
-
-    } catch (error) {
-        console.error("현황판 갱신 중 오류 발생:", error);
-    }
-}
-
-// 실시간 감시 이벤트 리스너들 (두 채널 모두 감시)
-const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
-
-client.on('threadCreate', async (thread) => {
-    if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard();
-});
-
-client.on('threadUpdate', async (before, after) => {
-    if (watchChannels.includes(after.parentId)) await updateAnnouncementBoard();
-});
-
-client.on('threadDelete', async (thread) => {
-    if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard();
-});
-
-client.login(process.env.DISCORD_TOKEN);
+            const fetched = await
