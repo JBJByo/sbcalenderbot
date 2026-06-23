@@ -73,13 +73,13 @@ async function updateAnnouncementBoard() {
                 sortKey = { month, day, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
                 
-                // 🌟 원래 형식으로 복구하고, 텍스트 양옆에 백틱(`)을 붙여 뱃지 디자인 적용
-                displayTitle = `\`${month}/${day}\` ${cleanedTitle}`;
+                // 🌟 원래 날짜 형식 + 백틱 뱃지 + 세로줄(｜) 다시 추가!
+                displayTitle = `\`${month}/${day}\` ｜ ${cleanedTitle}`;
             } else {
                 if (title.includes("일협")) {
                     sortKey = { month: 98, day: 98, isIlhyeop: true }; 
-                    // 🌟 일협도 동일하게 뱃지 디자인 적용
-                    displayTitle = `\`일협\` ${cleanedTitle}`;
+                    // 🌟 일협 뱃지 + 세로줄(｜) 다시 추가!
+                    displayTitle = `\`일협\` ｜ ${cleanedTitle}`;
                 } else {
                     sortKey = { month: 99, day: 99, isIlhyeop: false };
                     displayTitle = cleanedTitle;
@@ -152,8 +152,6 @@ async function updateAnnouncementBoard() {
         // 1. 메인 타이틀과 인용구, 그리고 첫 구분선
         lines.push("# 📢 실시간 포스팅 현황판");
         lines.push("> 머미 및 기타 모집 일정을 실시간으로 안내합니다.");
-        lines.push("---");
-        lines.push(""); 
         
         // --- 머미 파트 ---
         lines.push("## 🩸 머미 마감 일정");
@@ -162,9 +160,6 @@ async function updateAnnouncementBoard() {
         } else {
             lines.push("*등록된 머미 마감 일정이 없습니다.* 🥲");
         }
-        lines.push("");
-        lines.push("---"); 
-        lines.push("");
 
         lines.push("## 🔎 머미 모집 중");
         if (murderRecruitingList.length > 0) {
@@ -172,9 +167,7 @@ async function updateAnnouncementBoard() {
         } else {
             lines.push("*모집 중인 머미 포스팅이 없습니다.* 👀");
         }
-        lines.push("");
-        lines.push("---");
-        lines.push("");
+
 
         // --- 기타 모집 파트 ---
         lines.push("## 📌 기타 모집 완료");
@@ -183,9 +176,7 @@ async function updateAnnouncementBoard() {
         } else {
             lines.push("*등록된 기타 완료 일정이 없습니다.*");
         }
-        lines.push("");
-        lines.push("---");
-        lines.push(""); 
+
 
         lines.push("## 🚀 기타 모집 중");
         if (otherRecruitingList.length > 0) {
