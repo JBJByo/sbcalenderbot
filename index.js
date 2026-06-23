@@ -73,17 +73,13 @@ async function updateAnnouncementBoard() {
                 sortKey = { month, day, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
                 
-                // 🌟 월과 일을 무조건 두 자리로 맞추기 (예: 6 -> 06)
-                const paddedMonth = month.toString().padStart(2, '0');
-                const paddedDay = day.toString().padStart(2, '0');
-
-                // 🌟 날짜 뒤에 세로줄( ｜ ) 추가하여 정렬감 주기
-                displayTitle = `[${paddedMonth}/${paddedDay}] ｜ ${cleanedTitle}`;
+                // 🌟 원래 형식으로 복구하고, 텍스트 양옆에 백틱(`)을 붙여 뱃지 디자인 적용
+                displayTitle = `\`${month}/${day}\` ${cleanedTitle}`;
             } else {
                 if (title.includes("일협")) {
                     sortKey = { month: 98, day: 98, isIlhyeop: true }; 
-                    // 🌟 일협도 괄호 너비를 늘리고 세로줄 추가
-                    displayTitle = `( 일 협 ) ｜ ${cleanedTitle}`;
+                    // 🌟 일협도 동일하게 뱃지 디자인 적용
+                    displayTitle = `\`일협\` ${cleanedTitle}`;
                 } else {
                     sortKey = { month: 99, day: 99, isIlhyeop: false };
                     displayTitle = cleanedTitle;
@@ -151,11 +147,13 @@ async function updateAnnouncementBoard() {
         // ==========================================
         // 🎨 디자인이 적용된 현황판 텍스트 구성 시작
         // ==========================================
-        const lines = []; // 배열 초기화 시 \n 제거
+        const lines = []; 
 
         // 1. 메인 타이틀과 인용구, 그리고 첫 구분선
         lines.push("# 📢 실시간 포스팅 현황판");
         lines.push("> 머미 및 기타 모집 일정을 실시간으로 안내합니다.");
+        lines.push("---");
+        lines.push(""); 
         
         // --- 머미 파트 ---
         lines.push("## 🩸 머미 마감 일정");
@@ -165,6 +163,8 @@ async function updateAnnouncementBoard() {
             lines.push("*등록된 머미 마감 일정이 없습니다.* 🥲");
         }
         lines.push("");
+        lines.push("---"); 
+        lines.push("");
 
         lines.push("## 🔎 머미 모집 중");
         if (murderRecruitingList.length > 0) {
@@ -172,6 +172,8 @@ async function updateAnnouncementBoard() {
         } else {
             lines.push("*모집 중인 머미 포스팅이 없습니다.* 👀");
         }
+        lines.push("");
+        lines.push("---");
         lines.push("");
 
         // --- 기타 모집 파트 ---
@@ -182,6 +184,8 @@ async function updateAnnouncementBoard() {
             lines.push("*등록된 기타 완료 일정이 없습니다.*");
         }
         lines.push("");
+        lines.push("---");
+        lines.push(""); 
 
         lines.push("## 🚀 기타 모집 중");
         if (otherRecruitingList.length > 0) {
