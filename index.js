@@ -110,13 +110,12 @@ async function updateAnnouncementBoard() {
         otherScheduleList.sort(sortFunction);
         otherRecruitingList.sort(sortFunction);
 
-        const lines = ["# 📢 실시간 포스팅 현황판", "> 머미 및 기타 모집 일정을 실시간으로 안내합니다.", "---", ""];
+        const lines = ["# 📢 실시간 포스팅 현황판", "> 머미 및 기타 모집 일정을 실시간으로 안내합니다."];
         
         const addSection = (title, list, emptyMsg) => {
             lines.push(`## ${title}`);
             if (list.length > 0) list.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
             else lines.push(`*${emptyMsg}*`);
-            lines.push("", "---", "");
         };
 
         addSection("🩸 머미 마감 일정", murderScheduleList, "등록된 머미 마감 일정이 없습니다. 🥲");
