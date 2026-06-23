@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
@@ -138,9 +138,9 @@ async function updateAnnouncementBoard() {
         otherRecruitingList.sort(sortFunction);
 
         // ==========================================
-        // 🎨 본문(Description)에 들어갈 내용 구성
+        // 🎨 디자인이 적용된 현황판 일반 텍스트 구성
         // ==========================================
-        const lines = [];
+        const lines = ["# 📢 실시간 포스팅 현황판\n"];
         
         // --- 머미 파트 ---
         lines.push("### 🩸 머미 마감 일정");
@@ -175,13 +175,13 @@ async function updateAnnouncementBoard() {
             lines.push("*모집 중인 기타 포스팅이 없습니다.*");
         }
 
-        // 임베드의 설명란(Description) 한도는 4096자이므로 4000자로 청크 분할
-        const MAX_EMBED_LENGTH = 4000;
+        // 📦 1. 일반 텍스트 한도인 2000자를 넘지 않게 청크(덩어리) 분할하기
+        const MAX_LENGTH = 1900;
         const chunks = [];
         let currentChunk = "";
 
         for (const line of lines) {
-            if ((currentChunk + line + "\n").length > MAX_EMBED_LENGTH) {
+            if ((currentChunk + line + "\n").length > MAX_LENGTH) {
                 if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
                 currentChunk = line + "\n"; 
             } else {
@@ -190,6 +190,46 @@ async function updateAnnouncementBoard() {
         }
         if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
 
-        // 🧹 채널 청소
+        // 🧹 2. 현황판 텍스트 채널 안의 모든 메시지를 싹 밀어버립니다.
         try {
-            const fetched = await
+            const fetched = await textChannel.messages.fetch({ limit: 100 });
+            if (fetched.size > 0) {
+                await textChannel.bulkDelete(fetched).catch(async () => {
+                    for (const msg of fetched.values()) {
+                        await msg.delete().catch(() => {});
+                    }
+                });
+                console.log(`🧹 현황판 채널 내 기존 메시지 ${fetched.size}개를 완전히 청소했습니다.`);
+            }
+        } catch (cleanError) {
+            console.error("🧹 현황판 채널 청소 중 오류 발생:", cleanError);
+        }
+
+        // 📝 3. 텅 빈 채널에 새 현황판 깔끔하게 발송 (일반 텍스트)
+        for (const chunk of chunks) {
+            await textChannel.send(chunk);
+        }
+
+        console.log("✅ 임베드 없는 새 현황판 완벽 갱신 완료!");
+
+    } catch (error) {
+        console.error("현황판 갱신 중 오류 발생:", error);
+    }
+}
+
+// 실시간 감시 이벤트 리스너들 (두 채널 모두 감시)
+const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
+
+client.on('threadCreate', async (thread) => {
+    if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard();
+});
+
+client.on('threadUpdate', async (before, after) => {
+    if (watchChannels.includes(after.parentId)) await updateAnnouncementBoard();
+});
+
+client.on('threadDelete', async (thread) => {
+    if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard();
+});
+
+client.login(process.env.DISCORD_TOKEN);
