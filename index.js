@@ -141,11 +141,11 @@ async function updateAnnouncementBoard() {
 
         // [1] 머미 마감 일정 (빨간색 선)
         const embed1 = new EmbedBuilder()
-            .setTitle("## 🩸 머미 마감 일정")
+            .setTitle("🩸 머미 마감 일정")
             .setColor(0xE24C3C);
         let content1 = "";
         if (murderScheduleList.length > 0) {
-            murderScheduleList.forEach((post, i) => content1 += `## ${i + 1}. ${post.text}\n`);
+            murderScheduleList.forEach((post, i) => content1 += `### ${i + 1}. ${post.text}\n`);
         } else {
             content1 = "*등록된 머미 마감 일정이 없습니다.* 🥲";
         }
@@ -154,11 +154,11 @@ async function updateAnnouncementBoard() {
 
         // [2] 머미 모집 중 (빨간색 선)
         const embed2 = new EmbedBuilder()
-            .setTitle("## 🔎 머미 모집 중")
+            .setTitle("🔎 머미 모집 중")
             .setColor(0xE24C3C);
         let content2 = "";
         if (murderRecruitingList.length > 0) {
-            murderRecruitingList.forEach((post, i) => content2 += `## ${i + 1}. ${post.text}\n`);
+            murderRecruitingList.forEach((post, i) => content2 += `### ${i + 1}. ${post.text}\n`);
         } else {
             content2 = "*모집 중인 머미 포스팅이 없습니다.* 👀";
         }
@@ -167,11 +167,11 @@ async function updateAnnouncementBoard() {
 
         // [3] 기타 모집 완료 (파란색 선)
         const embed3 = new EmbedBuilder()
-            .setTitle("## 📌 기타 모집 완료")
+            .setTitle("📌 기타 모집 완료")
             .setColor(0x3498DB);
         let content3 = "";
         if (otherScheduleList.length > 0) {
-            otherScheduleList.forEach((post, i) => content3 += `## ${i + 1}. ${post.text}\n`);
+            otherScheduleList.forEach((post, i) => content3 += `### ${i + 1}. ${post.text}\n`);
         } else {
             content3 = "*등록된 기타 완료 일정이 없습니다.*";
         }
@@ -180,11 +180,11 @@ async function updateAnnouncementBoard() {
 
         // [4] 기타 모집 중 (파란색 선)
         const embed4 = new EmbedBuilder()
-            .setTitle("## 🚀 기타 모집 중")
+            .setTitle("🚀 기타 모집 중")
             .setColor(0x3498DB);
         let content4 = "";
         if (otherRecruitingList.length > 0) {
-            otherRecruitingList.forEach((post, i) => content4 += `## ${i + 1}. ${post.text}\n`);
+            otherRecruitingList.forEach((post, i) => content4 += `### ${i + 1}. ${post.text}\n`);
         } else {
             content4 = "*모집 중인 기타 포스팅이 없습니다.*";
         }
