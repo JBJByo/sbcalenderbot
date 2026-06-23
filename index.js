@@ -74,12 +74,12 @@ async function updateAnnouncementBoard() {
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
                 
                 // 🌟 원래 날짜 형식 + 백틱 뱃지 + 세로줄(｜) 다시 추가!
-                displayTitle = `\${month}/${day}\ ｜ ${cleanedTitle}`;
+                displayTitle = \`${month}/${day}\ ｜ ${cleanedTitle}`;
             } else {
                 if (title.includes("일협")) {
                     sortKey = { month: 98, day: 98, isIlhyeop: true }; 
                     // 🌟 일협 뱃지 + 세로줄(｜) 다시 추가!
-                    displayTitle = `\일협\ ｜ ${cleanedTitle}`;
+                    displayTitle = \`일협\ ｜ ${cleanedTitle}`;
                 } else {
                     sortKey = { month: 99, day: 99, isIlhyeop: false };
                     displayTitle = cleanedTitle;
