@@ -72,13 +72,11 @@ async function updateAnnouncementBoard() {
                 const day = parseInt(match[2], 10);
                 sortKey = { month, day, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
-                // 🎨 날짜 부분에 백틱(`)을 씌워 하이라이트 효과 적용
-                displayTitle = `\`[${month}/${day}]\` ${cleanedTitle}`;
+                displayTitle = `[${month}/${day}] ${cleanedTitle}`;
             } else {
                 if (title.includes("일협")) {
                     sortKey = { month: 98, day: 98, isIlhyeop: true }; 
-                    // 🎨 일협 태그에도 하이라이트 효과 적용
-                    displayTitle = `\`(일협)\` ${cleanedTitle}`;
+                    displayTitle = `(일협) ${cleanedTitle}`;
                 } else {
                     sortKey = { month: 99, day: 99, isIlhyeop: false };
                     displayTitle = cleanedTitle;
@@ -146,46 +144,39 @@ async function updateAnnouncementBoard() {
         // ==========================================
         // 🎨 디자인이 적용된 현황판 텍스트 구성 시작
         // ==========================================
-        const lines = ["# 📢 실시간 포스팅 현황판"]; // 더블 엔터 방지
-        lines.push("");
+        const lines = ["# 📢 실시간 포스팅 현황판\n"];
         
         // --- 머미 파트 ---
         lines.push("## 🩸 머미 마감 일정");
         if (murderScheduleList.length > 0) {
-            murderScheduleList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            murderScheduleList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
         } else {
-            lines.push("> *등록된 머미 마감 일정이 없습니다.* 🥲");
+            lines.push("*등록된 머미 마감 일정이 없습니다.* 🥲");
         }
-        lines.push(""); 
-        lines.push("---");
-        lines.push(""); 
+        lines.push("\n"); 
 
         lines.push("## 🔎 머미 모집 중");
         if (murderRecruitingList.length > 0) {
-            murderRecruitingList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            murderRecruitingList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
         } else {
-            lines.push("> *모집 중인 머미 포스팅이 없습니다.* 👀");
+            lines.push("*모집 중인 머미 포스팅이 없습니다.* 👀");
         }
-        lines.push(""); 
-        lines.push("---");
-        lines.push(""); 
+        lines.push("\n");
 
         // --- 기타 모집 파트 ---
         lines.push("## 📌 기타 모집 완료");
         if (otherScheduleList.length > 0) {
-            otherScheduleList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            otherScheduleList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
         } else {
-            lines.push("> *등록된 기타 완료 일정이 없습니다.*");
+            lines.push("*등록된 기타 완료 일정이 없습니다.*");
         }
-        lines.push(""); 
-        lines.push("---");
-        lines.push(""); 
+        lines.push("\n"); 
 
         lines.push("## 🚀 기타 모집 중");
         if (otherRecruitingList.length > 0) {
-            otherRecruitingList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
+            otherRecruitingList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
         } else {
-            lines.push("> *모집 중인 기타 포스팅이 없습니다.*");
+            lines.push("*모집 중인 기타 포스팅이 없습니다.*");
         }
 
         // 📦 1. 2000자 안 넘게 청크(덩어리) 분할하기
