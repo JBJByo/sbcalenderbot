@@ -72,13 +72,18 @@ async function updateAnnouncementBoard() {
                 const day = parseInt(match[2], 10);
                 sortKey = { month, day, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
-                // 🎨 날짜 부분을 굵게(**) 강조 처리
-                displayTitle = `**[${month}/${day}]** ${cleanedTitle}`;
+                
+                // 🌟 월과 일을 무조건 두 자리로 맞추기 (예: 6 -> 06)
+                const paddedMonth = month.toString().padStart(2, '0');
+                const paddedDay = day.toString().padStart(2, '0');
+
+                // 🌟 날짜 뒤에 세로줄( ｜ ) 추가하여 정렬감 주기
+                displayTitle = `**[${paddedMonth}/${paddedDay}]** ｜ ${cleanedTitle}`;
             } else {
                 if (title.includes("일협")) {
                     sortKey = { month: 98, day: 98, isIlhyeop: true }; 
-                    // 🎨 일협 텍스트를 굵게(**) 강조 처리
-                    displayTitle = `**(일협)** ${cleanedTitle}`;
+                    // 🌟 일협도 괄호 너비를 늘리고 세로줄 추가
+                    displayTitle = `**( 일 협 )** ｜ ${cleanedTitle}`;
                 } else {
                     sortKey = { month: 99, day: 99, isIlhyeop: false };
                     displayTitle = cleanedTitle;
