@@ -153,7 +153,7 @@ async function updateAnnouncementBoard() {
         } else {
             lines.push("*등록된 머미 마감 일정이 없습니다.* 🥲");
         }
-        lines.push("\n"); 
+        lines.push(); 
 
         lines.push("## 🔎 머미 모집 중");
         if (murderRecruitingList.length > 0) {
@@ -161,7 +161,7 @@ async function updateAnnouncementBoard() {
         } else {
             lines.push("*모집 중인 머미 포스팅이 없습니다.* 👀");
         }
-        lines.push("\n");
+        lines.push();
 
         // --- 기타 모집 파트 ---
         lines.push("## 📌 기타 모집 완료");
@@ -170,7 +170,7 @@ async function updateAnnouncementBoard() {
         } else {
             lines.push("*등록된 기타 완료 일정이 없습니다.*");
         }
-        lines.push("\n"); 
+        lines.push(); 
 
         lines.push("## 🚀 기타 모집 중");
         if (otherRecruitingList.length > 0) {
