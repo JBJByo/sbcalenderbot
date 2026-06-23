@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js'); // EmbedBuilder 완전히 제거
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
@@ -59,6 +59,7 @@ async function updateAnnouncementBoard() {
             let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '').replace(/\s+/g, ' ').trim();
             const match = title.match(DATE_PATTERN);
             
+            // 날짜 및 고정 문구에서 회색 박스(백틱) 기호 완전히 제거
             if (match) {
                 const monthNum = parseInt(match[1], 10);
                 const dayNum = parseInt(match[2], 10);
@@ -78,6 +79,7 @@ async function updateAnnouncementBoard() {
                 }
             }
 
+            // 신규 글 표시 원래대로 유지
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
             const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
             if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
@@ -133,10 +135,63 @@ async function updateAnnouncementBoard() {
         otherRecruitingList.sort(sortFunction);
 
         // ==========================================
-        // 📝 일반 텍스트 포맷 분할 전송 (2000자 제한 우회)
+        // 🎨 4개의 독립된 항목별 임베드(Embed) 생성
         // ==========================================
-        
-        // 🧹 [단계 1] 채널의 기존 메시지 싹 청소하기
+        const embedsToSend = [];
+
+        // [1] 머미 마감 일정 (빨간색 선)
+        const embed1 = new EmbedBuilder()
+            .setTitle("🩸 머미 마감 일정")
+            .setColor(0xE24C3C);
+        let content1 = "";
+        if (murderScheduleList.length > 0) {
+            murderScheduleList.forEach((post, i) => content1 += `${i + 1}. ${post.text}\n`);
+        } else {
+            content1 = "*등록된 머미 마감 일정이 없습니다.* 🥲";
+        }
+        embed1.setDescription(content1);
+        embedsToSend.push(embed1);
+
+        // [2] 머미 모집 중 (빨간색 선)
+        const embed2 = new EmbedBuilder()
+            .setTitle("🔎 머미 모집 중")
+            .setColor(0xE24C3C);
+        let content2 = "";
+        if (murderRecruitingList.length > 0) {
+            murderRecruitingList.forEach((post, i) => content2 += `${i + 1}. ${post.text}\n`);
+        } else {
+            content2 = "*모집 중인 머미 포스팅이 없습니다.* 👀";
+        }
+        embed2.setDescription(content2);
+        embedsToSend.push(embed2);
+
+        // [3] 기타 모집 완료 (파란색 선)
+        const embed3 = new EmbedBuilder()
+            .setTitle("📌 기타 모집 완료")
+            .setColor(0x3498DB);
+        let content3 = "";
+        if (otherScheduleList.length > 0) {
+            otherScheduleList.forEach((post, i) => content3 += `${i + 1}. ${post.text}\n`);
+        } else {
+            content3 = "*등록된 기타 완료 일정이 없습니다.*";
+        }
+        embed3.setDescription(content3);
+        embedsToSend.push(embed3);
+
+        // [4] 기타 모집 중 (파란색 선)
+        const embed4 = new EmbedBuilder()
+            .setTitle("🚀 기타 모집 중")
+            .setColor(0x3498DB);
+        let content4 = "";
+        if (otherRecruitingList.length > 0) {
+            otherRecruitingList.forEach((post, i) => content4 += `### ${i + 1}. ${post.text}\n`);
+        } else {
+            content4 = "*모집 중인 기타 포스팅이 없습니다.*";
+        }
+        embed4.setDescription(content4);
+        embedsToSend.push(embed4);
+
+        // 🧹 기존 메시지 청소
         try {
             const fetched = await textChannel.messages.fetch({ limit: 100 });
             if (fetched.size > 0) {
@@ -150,57 +205,23 @@ async function updateAnnouncementBoard() {
             console.error("🧹 현황판 채널 청소 중 오류 발생:", cleanError);
         }
 
-        // 🚀 [단계 2] 2000자 버그가 터지지 않게 섹션별로 쪼개서 순서대로 전송
-        
-        // 1. 메인 타이틀 전송
-        await textChannel.send({ content: "# 📢 실시간 포스팅 현황판" });
+        // 상단 메인 타이틀 텍스트와 함께 4개의 깔끔한 임베드 전송
+        await textChannel.send({ 
+            content: "# 📢 실시간 포스팅 현황판", 
+            embeds: embedsToSend 
+        });
 
-        // 2. 머미 마감 일정 전송
-        let msg1 = "### 🩸 머미 마감 일정\n";
-        if (murderScheduleList.length > 0) {
-            murderScheduleList.forEach((post, i) => msg1 += `> **${i + 1}.** ${post.text}\n`);
-        } else {
-            msg1 += "> *등록된 머미 마감 일정이 없습니다.* 🥲\n";
-        }
-        await textChannel.send({ content: msg1 });
-
-        // 3. 머미 모집 중 전송
-        let msg2 = "### 🔎 머미 모집 중\n";
-        if (murderRecruitingList.length > 0) {
-            murderRecruitingList.forEach((post, i) => msg2 += `> **${i + 1}.** ${post.text}\n`);
-        } else {
-            msg2 += "> *모집 중인 머미 포스팅이 없습니다.* 👀\n";
-        }
-        await textChannel.send({ content: msg2 });
-
-        // 4. 기타 모집 완료 전송
-        let msg3 = "### 📌 기타 모집 완료\n";
-        if (otherScheduleList.length > 0) {
-            otherScheduleList.forEach((post, i) => msg3 += `> **${i + 1}.** ${post.text}\n`);
-        } else {
-            msg3 += "> *등록된 기타 완료 일정이 없습니다.*\n";
-        }
-        await textChannel.send({ content: msg3 });
-
-        // 5. 기타 모집 중 전송
-        let msg4 = "### 🚀 기타 모집 중\n";
-        if (otherRecruitingList.length > 0) {
-            otherRecruitingList.forEach((post, i) => msg4 += `> **${i + 1}.** ${post.text}\n`);
-        } else {
-            msg4 += "> *모집 중인 기타 포스팅이 없습니다.*\n";
-        }
-
-        console.log("✅ 일반 텍스트 분할 전송 포맷으로 현황판 완벽 갱신 완료!");
+        console.log("✅ 4개 항목 개별 임베드 현황판 완벽 갱신 완료!");
 
     } catch (error) {
         console.error("현황판 갱신 중 오류 발생:", error);
     }
 }
 
-// 실시간 감시 리스너 (threadUpdate 감시 오류 수정 포함)
+// 실시간 감시 리스너
 const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
 client.on('threadCreate', async (thread) => { if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard(); });
-client.on('threadUpdate', async (before, after) => { if (watchChannels.includes(after.parentId)) await updateAnnouncementBoard(); });
+client.on('threadUpdate', async (before, after) => { if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard(); });
 client.on('threadDelete', async (thread) => { if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard(); });
 
 client.login(process.env.DISCORD_TOKEN);
