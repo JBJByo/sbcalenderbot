@@ -34,6 +34,28 @@ client.on('ready', async (c) => {
     await updateAnnouncementBoard();
 });
 
+// 💡 2000자 제한 우회를 위한 줄바꿈 기준 텍스트 분할 전송 함수
+async function sendChunkedText(textChannel, fullText) {
+    if (!fullText.trim()) return;
+    
+    const lines = fullText.split('\n');
+    let currentChunk = "";
+
+    for (const line of lines) {
+        // 안전하게 1900자가 넘어가면 그 전까지의 내용을 먼저 전송
+        if ((currentChunk + line + "\n").length > 1900) {
+            await textChannel.send({ content: currentChunk });
+            currentChunk = line + "\n";
+        } else {
+            currentChunk += line + "\n";
+        }
+    }
+
+    if (currentChunk.trim()) {
+        await textChannel.send({ content: currentChunk });
+    }
+}
+
 async function updateAnnouncementBoard() {
     try {
         const textChannel = await client.channels.fetch(ANNOUNCEMENT_TEXT_ID).catch(() => null);
@@ -59,7 +81,6 @@ async function updateAnnouncementBoard() {
             let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '').replace(/\s+/g, ' ').trim();
             const match = title.match(DATE_PATTERN);
             
-            // 날짜 및 고정 문구에서 회색 박스(백틱) 기호 완전히 제거
             if (match) {
                 const monthNum = parseInt(match[1], 10);
                 const dayNum = parseInt(match[2], 10);
@@ -79,7 +100,6 @@ async function updateAnnouncementBoard() {
                 }
             }
 
-            // 신규 글 표시 원래대로 유지
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
             const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
             if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
@@ -149,13 +169,13 @@ async function updateAnnouncementBoard() {
         }
 
         // ============================================================
-        // 🚀 [수정 사항] 제목은 임베드로, 본문 리스트는 순수 텍스트로 분리 전송
+        // 🚀 본문 전송 시 2000자 초과 방지 쪼개기 적용
         // ============================================================
 
         // [0] 최상단 메인 타이틀 전송
         await textChannel.send({ content: "# 📢 실시간 포스팅 현황판" });
 
-        // [1] 머미 마감 일정 (빨간색 선 제목 임베드 ➡️ 일반 텍스트 본문)
+        // [1] 머미 마감 일정
         const embed1 = new EmbedBuilder().setTitle("🩸 머미 마감 일정").setColor(0xE24C3C);
         await textChannel.send({ embeds: [embed1] });
 
@@ -163,11 +183,11 @@ async function updateAnnouncementBoard() {
         if (murderScheduleList.length > 0) {
             murderScheduleList.forEach((post, i) => content1 += `${i + 1}. ${post.text}\n`);
         } else {
-            content1 = "*등록된 머미 마감 일정이 없습니다.* 🥲";
+            content1 = "*등록된 머미 마감 일정이 없습니다.* 🥲\n";
         }
-        await textChannel.send({ content: content1 });
+        await sendChunkedText(textChannel, content1); // ◀ 안전 전송 함수로 변경
 
-        // [2] 머미 모집 중 (빨간색 선 제목 임베드 ➡️ 일반 텍스트 본문)
+        // [2] 머미 모집 중
         const embed2 = new EmbedBuilder().setTitle("🔎 머미 모집 중").setColor(0xE24C3C);
         await textChannel.send({ embeds: [embed2] });
 
@@ -175,11 +195,11 @@ async function updateAnnouncementBoard() {
         if (murderRecruitingList.length > 0) {
             murderRecruitingList.forEach((post, i) => content2 += `${i + 1}. ${post.text}\n`);
         } else {
-            content2 = "*모집 중인 머미 포스팅이 없습니다.* 👀";
+            content2 = "*모집 중인 머미 포스팅이 없습니다.* 👀\n";
         }
-        await textChannel.send({ content: content2 });
+        await sendChunkedText(textChannel, content2); // ◀ 안전 전송 함수로 변경
 
-        // [3] 기타 모집 완료 (파란색 선 제목 임베드 ➡️ 일반 텍스트 본문)
+        // [3] 기타 모집 완료
         const embed3 = new EmbedBuilder().setTitle("📌 기타 모집 완료").setColor(0x3498DB);
         await textChannel.send({ embeds: [embed3] });
 
@@ -187,11 +207,11 @@ async function updateAnnouncementBoard() {
         if (otherScheduleList.length > 0) {
             otherScheduleList.forEach((post, i) => content3 += `${i + 1}. ${post.text}\n`);
         } else {
-            content3 = "*등록된 기타 완료 일정이 없습니다.*";
+            content3 = "*등록된 기타 완료 일정이 없습니다.*\n";
         }
-        await textChannel.send({ content: content3 });
+        await sendChunkedText(textChannel, content3); // ◀ 안전 전송 함수로 변경
 
-        // [4] 기타 모집 중 (파란색 선 제목 임베드 ➡️ 일반 텍스트 본문)
+        // [4] 기타 모집 중
         const embed4 = new EmbedBuilder().setTitle("🚀 기타 모집 중").setColor(0x3498DB);
         await textChannel.send({ embeds: [embed4] });
 
@@ -199,11 +219,11 @@ async function updateAnnouncementBoard() {
         if (otherRecruitingList.length > 0) {
             otherRecruitingList.forEach((post, i) => content4 += `${i + 1}. ${post.text}\n`);
         } else {
-            content4 = "*모집 중인 기타 포스팅이 없습니다.*";
+            content4 = "*모집 중인 기타 포스팅이 없습니다.*\n";
         }
-        await textChannel.send({ content: content4 });
+        await sendChunkedText(textChannel, content4); // ◀ 안전 전송 함수로 변경
 
-        console.log("✅ 제목 임베드 및 본문 텍스트 분리형 현황판 완벽 갱신 완료!");
+        console.log("✅ 2000자 제한 방지가 적용된 현황판 갱신 완료!");
 
     } catch (error) {
         console.error("현황판 갱신 중 오류 발생:", error);
@@ -213,7 +233,6 @@ async function updateAnnouncementBoard() {
 // 실시간 감시 리스너
 const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
 client.on('threadCreate', async (thread) => { if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard(); });
-// 🐛 [버그 수정 완료] 기존의 정의되지 않은 thread -> after로 올바르게 교체하여 봇 터짐 방지
 client.on('threadUpdate', async (before, after) => { if (watchChannels.includes(after.parentId)) await updateAnnouncementBoard(); });
 client.on('threadDelete', async (thread) => { if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard(); });
 
