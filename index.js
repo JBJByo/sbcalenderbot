@@ -62,13 +62,12 @@ async function updateAnnouncementBoard() {
                 sortKey = { month, day, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
                 
-                // 🌟 백틱 제거, 세로줄 유지
-                displayTitle = `${month}/${day} ｜ ${cleanedTitle}`;
+                // 🌟 날짜에 대괄호 [ ] 적용 및 세로줄 유지
+                displayTitle = `[${month}/${day}] ｜ ${cleanedTitle}`;
             } else {
                 if (title.match(ILHYEOP_PATTERN)) {
                     sortKey = { month: 98, day: 98, isIlhyeop: true }; 
-                    // 🌟 일협/일정협의 처리 및 세로줄 유지
-                    displayTitle = `일협 ｜ ${cleanedTitle}`;
+                    displayTitle = `[일협] ｜ ${cleanedTitle}`;
                 } else {
                     sortKey = { month: 99, day: 99, isIlhyeop: false };
                     displayTitle = cleanedTitle;
