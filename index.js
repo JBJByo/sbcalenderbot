@@ -1,9 +1,9 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
-const PORT = process.env.PORT || 300;
+const PORT = process.env.PORT || 3002;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('🤖 디스코드 봇이 정상 구동 중입니다!');
@@ -59,7 +59,7 @@ async function updateAnnouncementBoard() {
             let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '').replace(/\s+/g, ' ').trim();
             const match = title.match(DATE_PATTERN);
             
-            // 날짜 자릿수를 맞춰서 세로 정렬이 깨지지 않게 처리
+            // 날짜 및 고정 문구에서 회색 박스(백틱) 기호 완전히 제거
             if (match) {
                 const monthNum = parseInt(match[1], 10);
                 const dayNum = parseInt(match[2], 10);
@@ -68,25 +68,24 @@ async function updateAnnouncementBoard() {
 
                 sortKey = { month: monthNum, day: dayNum, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
-                displayTitle = `\`${monthStr}/${dayStr}\` ┃ ${cleanedTitle}`;
+                displayTitle = `${monthStr}/${dayStr} ┃ ${cleanedTitle}`;
             } else {
                 if (title.includes("일협")) {
                     sortKey = { month: 98, day: 98, isIlhyeop: true }; 
-                    displayTitle = `\` 일협 \` ┃ ${cleanedTitle}`;
+                    displayTitle = `일협 ┃ ${cleanedTitle}`;
                 } else {
                     sortKey = { month: 99, day: 99, isIlhyeop: false };
-                    displayTitle = `\` 상시 \` ┃ ${cleanedTitle}`;
+                    displayTitle = `상시 ┃ ${cleanedTitle}`;
                 }
             }
 
-            // 원래 사용하시던 ⭐NEW!⭐ 형태로 복구
+            // 신규 글 표시 원래대로 유지
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
             const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
             if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
                 displayTitle += " ⭐NEW!⭐";
             }
 
-            // 클립 기호 제거 및 ([이동](URL)) 형태로 변경
             const postData = {
                 sortKey,
                 text: `${displayTitle} ([이동](${url}))`
@@ -99,7 +98,7 @@ async function updateAnnouncementBoard() {
             }
         };
 
-        // 1. 머미 포럼 글 가져오기
+        // 1. 머미 포럼 데이터 수집
         try {
             const mainForum = await client.channels.fetch(MAIN_FORUM_ID);
             if (mainForum) {
@@ -112,7 +111,7 @@ async function updateAnnouncementBoard() {
             console.log("⚠️ 메인 포럼(머미) 수집 실패");
         }
 
-        // 2. 기타 모집 포럼 글 가져오기
+        // 2. 기타 포럼 데이터 수집
         try {
             const otherForum = await client.channels.fetch(OTHER_FORUM_ID);
             if (otherForum) {
@@ -136,57 +135,61 @@ async function updateAnnouncementBoard() {
         otherRecruitingList.sort(sortFunction);
 
         // ==========================================
-        // 📝 원래 감성 그대로, 글씨는 크게 빌드 시작
+        // 🎨 4개의 독립된 항목별 임베드(Embed) 생성
         // ==========================================
-        const lines = ["# 📢 실시간 포스팅 현황판\n"];
-        
-        // 머미 파트 (원래 이모지와 타이틀 유지)
-        lines.push("### 🩸 머미 마감 일정");
+        const embedsToSend = [];
+
+        // [1] 머미 마감 일정 (빨간색 선)
+        const embed1 = new EmbedBuilder()
+            .setTitle("🩸 머미 마감 일정")
+            .setColor(0xE24C3C);
+        let content1 = "";
         if (murderScheduleList.length > 0) {
-            murderScheduleList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
+            murderScheduleList.forEach((post, i) => content1 += `${i + 1}. ${post.text}\n`);
         } else {
-            lines.push("*등록된 머미 마감 일정이 없습니다.* 🥲");
+            content1 = "*등록된 머미 마감 일정이 없습니다.* 🥲";
         }
-        lines.push("\n"); 
+        embed1.setDescription(content1);
+        embedsToSend.push(embed1);
 
-        lines.push("### 🔎 머미 모집 중");
+        // [2] 머미 모집 중 (빨간색 선)
+        const embed2 = new EmbedBuilder()
+            .setTitle("🔎 머미 모집 중")
+            .setColor(0xE24C3C);
+        let content2 = "";
         if (murderRecruitingList.length > 0) {
-            murderRecruitingList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
+            murderRecruitingList.forEach((post, i) => content2 += `${i + 1}. ${post.text}\n`);
         } else {
-            lines.push("*모집 중인 머미 포스팅이 없습니다.* 👀");
+            content2 = "*모집 중인 머미 포스팅이 없습니다.* 👀";
         }
-        lines.push("\n");
+        embed2.setDescription(content2);
+        embedsToSend.push(embed2);
 
-        // 기타 모집 파트 (원래 이모지와 타이틀 유지)
-        lines.push("### 📌 기타 모집 완료");
+        // [3] 기타 모집 완료 (파란색 선)
+        const embed3 = new EmbedBuilder()
+            .setTitle("📌 기타 모집 완료")
+            .setColor(0x3498DB);
+        let content3 = "";
         if (otherScheduleList.length > 0) {
-            otherScheduleList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
+            otherScheduleList.forEach((post, i) => content3 += `${i + 1}. ${post.text}\n`);
         } else {
-            lines.push("*등록된 기타 완료 일정이 없습니다.*");
+            content3 = "*등록된 기타 완료 일정이 없습니다.*";
         }
-        lines.push("\n"); 
+        embed3.setDescription(content3);
+        embedsToSend.push(embed3);
 
-        lines.push("### 🚀 기타 모집 중");
+        // [4] 기타 모집 중 (파란색 선)
+        const embed4 = new EmbedBuilder()
+            .setTitle("🚀 기타 모집 중")
+            .setColor(0x3498DB);
+        let content4 = "";
         if (otherRecruitingList.length > 0) {
-            otherRecruitingList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
+            otherRecruitingList.forEach((post, i) => content4 += `${i + 1}. ${post.text}\n`);
         } else {
-            lines.push("*모집 중인 기타 포스팅이 없습니다.*");
+            content4 = "*모집 중인 기타 포스팅이 없습니다.*";
         }
-
-        // 📦 2000자 청크 분할
-        const MAX_LENGTH = 1900;
-        const chunks = [];
-        let currentChunk = "";
-
-        for (const line of lines) {
-            if ((currentChunk + line + "\n").length > MAX_LENGTH) {
-                if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
-                currentChunk = line + "\n"; 
-            } else {
-                currentChunk += line + "\n";
-            }
-        }
-        if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
+        embed4.setDescription(content4);
+        embedsToSend.push(embed4);
 
         // 🧹 기존 메시지 청소
         try {
@@ -197,18 +200,18 @@ async function updateAnnouncementBoard() {
                         await msg.delete().catch(() => {});
                     }
                 });
-                console.log(`🧹 현황판 채널 내 기존 메시지 청소 완료`);
             }
         } catch (cleanError) {
             console.error("🧹 현황판 채널 청소 중 오류 발생:", cleanError);
         }
 
-        // 📝 새 현황판 발송
-        for (const chunk of chunks) {
-            await textChannel.send(chunk);
-        }
+        // 상단 메인 타이틀 텍스트와 함께 4개의 깔끔한 임베드 전송
+        await textChannel.send({ 
+            content: "# 📢 실시간 포스팅 현황판", 
+            embeds: embedsToSend 
+        });
 
-        console.log("✅ 원본 감성 + 대형 글씨 현황판 갱신 완료!");
+        console.log("✅ 4개 항목 개별 임베드 현황판 완벽 갱신 완료!");
 
     } catch (error) {
         console.error("현황판 갱신 중 오류 발생:", error);
