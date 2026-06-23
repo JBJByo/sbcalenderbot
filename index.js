@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js'); // EmbedBuilder 추가
+const { Client, GatewayIntentBits } = require('discord.js');
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
@@ -46,8 +46,10 @@ async function updateAnnouncementBoard() {
             return;
         }
 
+        // 머미용 배열
         const murderScheduleList = [];   
         const murderRecruitingList = []; 
+        // 기타 모집용 배열
         const otherScheduleList = [];
         const otherRecruitingList = [];
 
@@ -81,12 +83,14 @@ async function updateAnnouncementBoard() {
                 }
             }
 
+            // ================= 🕒 [진짜 NEW! 글만 판별하는 로직] =================
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
             const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
             if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
                 displayTitle += " ⭐NEW!⭐";
             }
+            // ============================================================================
 
             const postData = {
                 sortKey,
@@ -138,12 +142,12 @@ async function updateAnnouncementBoard() {
         otherRecruitingList.sort(sortFunction);
 
         // ==========================================
-        // 🎨 본문(Description)에 들어갈 내용 구성
+        // 🎨 디자인이 적용된 현황판 텍스트 구성 시작
         // ==========================================
-        const lines = [];
+        const lines = ["# 📢 실시간 포스팅 현황판\n"];
         
         // --- 머미 파트 ---
-        lines.push("### 🩸 머미 마감 일정");
+        lines.push("### 🩸 머미 일정");
         if (murderScheduleList.length > 0) {
             murderScheduleList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
         } else {
@@ -160,7 +164,7 @@ async function updateAnnouncementBoard() {
         lines.push("\n");
 
         // --- 기타 모집 파트 ---
-        lines.push("### 📌 기타 모집 완료");
+        lines.push("### 📌 기타 일정");
         if (otherScheduleList.length > 0) {
             otherScheduleList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
         } else {
@@ -175,13 +179,13 @@ async function updateAnnouncementBoard() {
             lines.push("> *모집 중인 기타 포스팅이 없습니다.*");
         }
 
-        // 임베드의 설명란(Description) 한도는 4096자이므로 4000자로 청크 분할
-        const MAX_EMBED_LENGTH = 4000;
+        // 📦 1. 2000자 안 넘게 청크(덩어리) 분할하기
+        const MAX_LENGTH = 1900;
         const chunks = [];
         let currentChunk = "";
 
         for (const line of lines) {
-            if ((currentChunk + line + "\n").length > MAX_EMBED_LENGTH) {
+            if ((currentChunk + line + "\n").length > MAX_LENGTH) {
                 if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
                 currentChunk = line + "\n"; 
             } else {
@@ -190,7 +194,7 @@ async function updateAnnouncementBoard() {
         }
         if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
 
-        // 🧹 채널 청소
+        // 🧹 2. 현황판 텍스트 채널 안의 모든 메시지를 싹 밀어버립니다.
         try {
             const fetched = await textChannel.messages.fetch({ limit: 100 });
             if (fetched.size > 0) {
@@ -199,32 +203,18 @@ async function updateAnnouncementBoard() {
                         await msg.delete().catch(() => {});
                     }
                 });
+                console.log(`🧹 현황판 채널 내 기존 메시지 ${fetched.size}개를 완전히 청소했습니다.`);
             }
         } catch (cleanError) {
             console.error("🧹 현황판 채널 청소 중 오류 발생:", cleanError);
         }
 
-        // 📝 임베드 생성 및 전송
-        for (let i = 0; i < chunks.length; i++) {
-            const embed = new EmbedBuilder()
-                .setColor('#5865F2') // 디스코드 특유의 예쁜 블루-퍼플 색상
-                .setDescription(chunks[i]);
-
-            // 첫 번째 박스에만 메인 제목을 달아줍니다.
-            if (i === 0) {
-                embed.setTitle('📢 실시간 포스팅 현황판');
-            }
-
-            // 마지막 박스에만 업데이트 시간을 달아줍니다.
-            if (i === chunks.length - 1) {
-                embed.setTimestamp()
-                     .setFooter({ text: '마지막 갱신 시간' });
-            }
-
-            await textChannel.send({ embeds: [embed] });
+        // 📝 3. 텅 빈 채널에 새 현황판 깔끔하게 발송
+        for (const chunk of chunks) {
+            await textChannel.send(chunk);
         }
 
-        console.log("✅ 임베드가 적용된 새 현황판 완벽 갱신 완료!");
+        console.log("✅ 중복 없는 새 현황판 완벽 갱신 완료!");
 
     } catch (error) {
         console.error("현황판 갱신 중 오류 발생:", error);
