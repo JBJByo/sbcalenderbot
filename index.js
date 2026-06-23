@@ -3,7 +3,7 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
-const PORT = process.env.PORT || 3007;
+const PORT = process.env.PORT || 3005;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('🤖 디스코드 봇이 정상 구동 중입니다!');
@@ -132,11 +132,7 @@ async function updateAnnouncementBoard() {
         otherScheduleList.sort(sortFunction);
         otherRecruitingList.sort(sortFunction);
 
-        // ==========================================
-        // 📝 일반 텍스트 포맷 분할 전송 (2000자 제한 우회)
-        // ==========================================
-        
-        // 🧹 [단계 1] 채널의 기존 메시지 싹 청소하기
+        // 🧹 [단계 1] 채널의 기존 메시지 청소
         try {
             const fetched = await textChannel.messages.fetch({ limit: 100 });
             if (fetched.size > 0) {
@@ -150,47 +146,42 @@ async function updateAnnouncementBoard() {
             console.error("🧹 현황판 채널 청소 중 오류 발생:", cleanError);
         }
 
-        // 🚀 [단계 2] 2000자 버그가 터지지 않게 섹션별로 쪼개서 순서대로 전송
-        
-        // 1. 메인 타이틀 전송
+        // 🚀 [단계 2] 실시간 자수 계산 및 안전 전송 함수 (2000자 초과 차단 시스템)
+        const sendSafeSection = async (sectionTitle, list, emptyMessage) => {
+            let currentMsg = `${sectionTitle}\n`;
+            
+            if (list.length === 0) {
+                currentMsg += `${emptyMessage}\n`;
+                await textChannel.send({ content: currentMsg });
+                return;
+            }
+
+            for (let i = 0; i < list.length; i++) {
+                const line = `> **${i + 1}.** ${list[i].text}\n`;
+                
+                // 디스코드 제한 2000자보다 안전하게 1800자 기준으로 끊어 전송
+                if (currentMsg.length + line.length > 1800) {
+                    await textChannel.send({ content: currentMsg });
+                    currentMsg = line; // 다음 메시지는 이 줄부터 시작
+                } else {
+                    currentMsg += line;
+                }
+            }
+            
+            if (currentMsg.length > 0) {
+                await textChannel.send({ content: currentMsg });
+            }
+        };
+
+        // 3. 실제 순차 전송 실행
         await textChannel.send({ content: "# 📢 실시간 포스팅 현황판" });
 
-        // 2. 머미 마감 일정 전송
-        let msg1 = "### 🩸 머미 마감 일정\n";
-        if (murderScheduleList.length > 0) {
-            murderScheduleList.forEach((post, i) => msg1 += `> **${i + 1}.** ${post.text}\n`);
-        } else {
-            msg1 += "> *등록된 머미 마감 일정이 없습니다.* 🥲\n";
-        }
-        await textChannel.send({ content: msg1 });
+        await sendSafeSection("### 🩸 머미 마감 일정", murderScheduleList, "> *등록된 머미 마감 일정이 없습니다.* 🥲");
+        await sendSafeSection("### 🔎 머미 모집 중", murderRecruitingList, "> *모집 중인 머미 포스팅이 없습니다.* 👀");
+        await sendSafeSection("### 📌 기타 모집 완료", otherScheduleList, "> *등록된 기타 완료 일정이 없습니다.*");
+        await sendSafeSection("### 🚀 기타 모집 중", otherRecruitingList, "> *모집 중인 기타 포스팅이 없습니다.*");
 
-        // 3. 머미 모집 중 전송
-        let msg2 = "### 🔎 머미 모집 중\n";
-        if (murderRecruitingList.length > 0) {
-            murderRecruitingList.forEach((post, i) => msg2 += `> **${i + 1}.** ${post.text}\n`);
-        } else {
-            msg2 += "> *모집 중인 머미 포스팅이 없습니다.* 👀\n";
-        }
-        await textChannel.send({ content: msg2 });
-
-        // 4. 기타 모집 완료 전송
-        let msg3 = "### 📌 기타 모집 완료\n";
-        if (otherScheduleList.length > 0) {
-            otherScheduleList.forEach((post, i) => msg3 += `> **${i + 1}.** ${post.text}\n`);
-        } else {
-            msg3 += "> *등록된 기타 완료 일정이 없습니다.*\n";
-        }
-        await textChannel.send({ content: msg3 });
-
-        // 5. 기타 모집 중 전송
-        let msg4 = "### 🚀 기타 모집 중\n";
-        if (otherRecruitingList.length > 0) {
-            otherRecruitingList.forEach((post, i) => msg4 += `> **${i + 1}.** ${post.text}\n`);
-        } else {
-            msg4 += "> *모집 중인 기타 포스팅이 없습니다.*\n";
-        }
-
-        console.log("✅ 일반 텍스트 분할 전송 포맷으로 현황판 완벽 갱신 완료!");
+        console.log("✅ 안전 분할 시스템으로 현황판 갱신 완료!");
 
     } catch (error) {
         console.error("현황판 갱신 중 오류 발생:", error);
