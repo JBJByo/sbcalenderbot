@@ -94,8 +94,7 @@ async function updateAnnouncementBoard() {
 
             const postData = {
                 sortKey,
-                // 글씨가 커 보이도록 제목 자체를 굵게(**) 처리합니다.
-                text: `**${displayTitle}** ([바로가기](${url}))`
+                text: `${displayTitle} ([바로가기](${url}))`
             };
 
             if (title.includes("마감") || title.includes("꽉")) {
@@ -150,32 +149,34 @@ async function updateAnnouncementBoard() {
         // --- 머미 파트 ---
         lines.push("### 🩸 머미 마감 일정");
         if (murderScheduleList.length > 0) {
-            // \n을 추가하여 각 항목 사이에 빈 줄을 강제로 넣어 시원하게 띄워줍니다.
-            murderScheduleList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}\n`));
+            murderScheduleList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("*등록된 머미 마감 일정이 없습니다.* 🥲\n");
+            lines.push("*등록된 머미 마감 일정이 없습니다.* 🥲");
         }
+        lines.push("\n"); 
 
         lines.push("### 🔎 머미 모집 중");
         if (murderRecruitingList.length > 0) {
-            murderRecruitingList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}\n`));
+            murderRecruitingList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("*모집 중인 머미 포스팅이 없습니다.* 👀\n");
+            lines.push("*모집 중인 머미 포스팅이 없습니다.* 👀");
         }
+        lines.push("\n");
 
         // --- 기타 모집 파트 ---
         lines.push("### 📌 기타 모집 완료");
         if (otherScheduleList.length > 0) {
-            otherScheduleList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}\n`));
+            otherScheduleList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("*등록된 기타 완료 일정이 없습니다.*\n");
+            lines.push("*등록된 기타 완료 일정이 없습니다.*");
         }
+        lines.push("\n"); 
 
         lines.push("### 🚀 기타 모집 중");
         if (otherRecruitingList.length > 0) {
-            otherRecruitingList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}\n`));
+            otherRecruitingList.forEach((post, i) => lines.push(`**${i + 1}.** ${post.text}`));
         } else {
-            lines.push("*모집 중인 기타 포스팅이 없습니다.*\n");
+            lines.push("*모집 중인 기타 포스팅이 없습니다.*");
         }
 
         // 📦 1. 2000자 안 넘게 청크(덩어리) 분할하기
@@ -213,7 +214,7 @@ async function updateAnnouncementBoard() {
             await textChannel.send(chunk);
         }
 
-        console.log("✅ 가독성 개선(굵기+줄바꿈) 현황판 완벽 갱신 완료!");
+        console.log("✅ 중복 없는 새 현황판 완벽 갱신 완료!");
 
     } catch (error) {
         console.error("현황판 갱신 중 오류 발생:", error);
