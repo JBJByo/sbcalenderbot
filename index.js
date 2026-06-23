@@ -22,7 +22,7 @@ const client = new Client({
 });
 
 // 2. 역할에 맞는 채널 ID 설정
-const MAIN_FORUM_ID = "1442443517313024100";     // 메인 포스팅 포럼 (머더 미스터리)
+const MAIN_FORUM_ID = "1442443517313024100";     // 메인 포스팅 포럼 (머미)
 const OTHER_FORUM_ID = "1518830708179730563";    // 추가 포스팅 포럼 (기타 모집)
 const ANNOUNCEMENT_TEXT_ID = "1515045364045053952"; // 로직을 통해 목록이 업데이트되는 현황판 텍스트 채널 ID
 
@@ -46,7 +46,7 @@ async function updateAnnouncementBoard() {
             return;
         }
 
-        // 머더 미스터리용 배열
+        // 머미용 배열
         const murderScheduleList = [];   
         const murderRecruitingList = []; 
         // 기타 모집용 배열
@@ -104,7 +104,7 @@ async function updateAnnouncementBoard() {
             }
         };
 
-        // 1. 머더 미스터리 포럼 글 가져오기
+        // 1. 머미 포럼 글 가져오기
         try {
             const mainForum = await client.channels.fetch(MAIN_FORUM_ID);
             if (mainForum) {
@@ -114,7 +114,7 @@ async function updateAnnouncementBoard() {
                 }
             }
         } catch (e) {
-            console.log("⚠️ 메인 포럼(머더 미스터리)을 읽어오는 중 문제가 발생했습니다.");
+            console.log("⚠️ 메인 포럼(머미)을 읽어오는 중 문제가 발생했습니다.");
         }
 
         // 2. 기타 모집 포럼 글 가져오기
@@ -141,40 +141,42 @@ async function updateAnnouncementBoard() {
         otherScheduleList.sort(sortFunction);
         otherRecruitingList.sort(sortFunction);
 
-        // 현황판 텍스트 구성
-        const lines = ["📢 **실시간 포스팅 현황판** 📢\n"];
+        // ==========================================
+        // 🎨 디자인이 적용된 현황판 텍스트 구성 시작
+        // ==========================================
+        const lines = ["# 📢 실시간 포스팅 현황판\n"];
         
-        // --- 머더 미스터리 파트 ---
-        lines.push("📌 **(머더 미스터리 일정)**");
+        // --- 머미 파트 ---
+        lines.push("### 🩸 머미 일정");
         if (murderScheduleList.length > 0) {
-            murderScheduleList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
+            murderScheduleList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
         } else {
-            lines.push("등록된 머더 미스터리 마감 일정이 없습니다.");
+            lines.push("> *등록된 머미 마감 일정이 없습니다.* 🥲");
         }
-        lines.push(""); 
+        lines.push("\n"); 
 
-        lines.push("🚀 **(머더 미스터리 모집중)**");
+        lines.push("### 🔎 머미 모집 중");
         if (murderRecruitingList.length > 0) {
-            murderRecruitingList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
+            murderRecruitingList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
         } else {
-            lines.push("모집 중인 머더 미스터리 포스팅이 없습니다.");
+            lines.push("> *모집 중인 머미 포스팅이 없습니다.* 👀");
         }
-        lines.push("");
+        lines.push("\n");
 
         // --- 기타 모집 파트 ---
-        lines.push("📌 **(기타 모집 완료)**");
+        lines.push("### 📌 기타 일정");
         if (otherScheduleList.length > 0) {
-            otherScheduleList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
+            otherScheduleList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
         } else {
-            lines.push("등록된 기타 모집 완료 일정이 없습니다.");
+            lines.push("> *등록된 기타 완료 일정이 없습니다.*");
         }
-        lines.push(""); 
+        lines.push("\n"); 
 
-        lines.push("🚀 **(기타 모집 중)**");
+        lines.push("### 🚀 기타 모집 중");
         if (otherRecruitingList.length > 0) {
-            otherRecruitingList.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
+            otherRecruitingList.forEach((post, i) => lines.push(`> **${i + 1}.** ${post.text}`));
         } else {
-            lines.push("모집 중인 기타 포스팅이 없습니다.");
+            lines.push("> *모집 중인 기타 포스팅이 없습니다.*");
         }
 
         // 📦 1. 2000자 안 넘게 청크(덩어리) 분할하기
