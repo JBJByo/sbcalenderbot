@@ -83,18 +83,16 @@ async function updateAnnouncementBoard() {
                 }
             }
 
-            // ================= 🕒 [진짜 NEW! 글만 판별하는 로직] =================
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
             const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
             if (now - lastTouchTime < TWENTY_FOUR_HOURS) {
                 displayTitle += " ⭐NEW!⭐";
             }
-            // ============================================================================
 
             const postData = {
                 sortKey,
-                text: `${displayTitle} ([바로가기](${url}))`
+                text: `${displayTitle} ([바로가기](${url}))` // 기존 형태로 완전 롤백
             };
 
             if (title.includes("마감") || title.includes("꽉")) {
