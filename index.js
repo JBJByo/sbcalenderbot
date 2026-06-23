@@ -3,7 +3,7 @@ const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3005;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('🤖 디스코드 봇이 정상 구동 중입니다!');
@@ -134,7 +134,64 @@ async function updateAnnouncementBoard() {
         otherScheduleList.sort(sortFunction);
         otherRecruitingList.sort(sortFunction);
 
-        // 🧹 기존 메시지 전체 청소
+        // ==========================================
+        // 🎨 4개의 독립된 항목별 임베드(Embed) 생성
+        // ==========================================
+        const embedsToSend = [];
+
+        // [1] 머미 마감 일정 (빨간색 선)
+        const embed1 = new EmbedBuilder()
+            .setTitle("## 🩸 머미 마감 일정")
+            .setColor(0xE24C3C);
+        let content1 = "";
+        if (murderScheduleList.length > 0) {
+            murderScheduleList.forEach((post, i) => content1 += `## ${i + 1}. ${post.text}\n`);
+        } else {
+            content1 = "*등록된 머미 마감 일정이 없습니다.* 🥲";
+        }
+        embed1.setDescription(content1);
+        embedsToSend.push(embed1);
+
+        // [2] 머미 모집 중 (빨간색 선)
+        const embed2 = new EmbedBuilder()
+            .setTitle("## 🔎 머미 모집 중")
+            .setColor(0xE24C3C);
+        let content2 = "";
+        if (murderRecruitingList.length > 0) {
+            murderRecruitingList.forEach((post, i) => content2 += `## ${i + 1}. ${post.text}\n`);
+        } else {
+            content2 = "*모집 중인 머미 포스팅이 없습니다.* 👀";
+        }
+        embed2.setDescription(content2);
+        embedsToSend.push(embed2);
+
+        // [3] 기타 모집 완료 (파란색 선)
+        const embed3 = new EmbedBuilder()
+            .setTitle("## 📌 기타 모집 완료")
+            .setColor(0x3498DB);
+        let content3 = "";
+        if (otherScheduleList.length > 0) {
+            otherScheduleList.forEach((post, i) => content3 += `## ${i + 1}. ${post.text}\n`);
+        } else {
+            content3 = "*등록된 기타 완료 일정이 없습니다.*";
+        }
+        embed3.setDescription(content3);
+        embedsToSend.push(embed3);
+
+        // [4] 기타 모집 중 (파란색 선)
+        const embed4 = new EmbedBuilder()
+            .setTitle("## 🚀 기타 모집 중")
+            .setColor(0x3498DB);
+        let content4 = "";
+        if (otherRecruitingList.length > 0) {
+            otherRecruitingList.forEach((post, i) => content4 += `## ${i + 1}. ${post.text}\n`);
+        } else {
+            content4 = "*모집 중인 기타 포스팅이 없습니다.*";
+        }
+        embed4.setDescription(content4);
+        embedsToSend.push(embed4);
+
+        // 🧹 기존 메시지 청소
         try {
             const fetched = await textChannel.messages.fetch({ limit: 100 });
             if (fetched.size > 0) {
@@ -148,62 +205,13 @@ async function updateAnnouncementBoard() {
             console.error("🧹 현황판 채널 청소 중 오류 발생:", cleanError);
         }
 
-        // ============================================================
-        // 🚀 [수정 사항] 제목은 임베드로, 본문 리스트는 순수 텍스트로 분리 전송
-        // ============================================================
+        // 상단 메인 타이틀 텍스트와 함께 4개의 깔끔한 임베드 전송
+        await textChannel.send({ 
+            content: "# 📢 실시간 포스팅 현황판", 
+            embeds: embedsToSend 
+        });
 
-        // [0] 최상단 메인 타이틀 전송
-        await textChannel.send({ content: "# 📢 실시간 포스팅 현황판" });
-
-        // [1] 머미 마감 일정 (빨간색 선 제목 임베드 ➡️ 일반 텍스트 본문)
-        const embed1 = new EmbedBuilder().setTitle("🩸 머미 마감 일정").setColor(0xE24C3C);
-        await textChannel.send({ embeds: [embed1] });
-
-        let content1 = "";
-        if (murderScheduleList.length > 0) {
-            murderScheduleList.forEach((post, i) => content1 += `${i + 1}. ${post.text}\n`);
-        } else {
-            content1 = "*등록된 머미 마감 일정이 없습니다.* 🥲";
-        }
-        await textChannel.send({ content: content1 });
-
-        // [2] 머미 모집 중 (빨간색 선 제목 임베드 ➡️ 일반 텍스트 본문)
-        const embed2 = new EmbedBuilder().setTitle("🔎 머미 모집 중").setColor(0xE24C3C);
-        await textChannel.send({ embeds: [embed2] });
-
-        let content2 = "";
-        if (murderRecruitingList.length > 0) {
-            murderRecruitingList.forEach((post, i) => content2 += `${i + 1}. ${post.text}\n`);
-        } else {
-            content2 = "*모집 중인 머미 포스팅이 없습니다.* 👀";
-        }
-        await textChannel.send({ content: content2 });
-
-        // [3] 기타 모집 완료 (파란색 선 제목 임베드 ➡️ 일반 텍스트 본문)
-        const embed3 = new EmbedBuilder().setTitle("📌 기타 모집 완료").setColor(0x3498DB);
-        await textChannel.send({ embeds: [embed3] });
-
-        let content3 = "";
-        if (otherScheduleList.length > 0) {
-            otherScheduleList.forEach((post, i) => content3 += `${i + 1}. ${post.text}\n`);
-        } else {
-            content3 = "*등록된 기타 완료 일정이 없습니다.*";
-        }
-        await textChannel.send({ content: content3 });
-
-        // [4] 기타 모집 중 (파란색 선 제목 임베드 ➡️ 일반 텍스트 본문)
-        const embed4 = new EmbedBuilder().setTitle("🚀 기타 모집 중").setColor(0x3498DB);
-        await textChannel.send({ embeds: [embed4] });
-
-        let content4 = "";
-        if (otherRecruitingList.length > 0) {
-            otherRecruitingList.forEach((post, i) => content4 += `${i + 1}. ${post.text}\n`);
-        } else {
-            content4 = "*모집 중인 기타 포스팅이 없습니다.*";
-        }
-        await textChannel.send({ content: content4 });
-
-        console.log("✅ 제목 임베드 및 본문 텍스트 분리형 현황판 완벽 갱신 완료!");
+        console.log("✅ 4개 항목 개별 임베드 현황판 완벽 갱신 완료!");
 
     } catch (error) {
         console.error("현황판 갱신 중 오류 발생:", error);
@@ -213,8 +221,7 @@ async function updateAnnouncementBoard() {
 // 실시간 감시 리스너
 const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
 client.on('threadCreate', async (thread) => { if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard(); });
-// 🐛 [버그 수정 완료] 기존의 정의되지 않은 thread -> after로 올바르게 교체하여 봇 터짐 방지
-client.on('threadUpdate', async (before, after) => { if (watchChannels.includes(after.parentId)) await updateAnnouncementBoard(); });
+client.on('threadUpdate', async (before, after) => { if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard(); });
 client.on('threadDelete', async (thread) => { if (watchChannels.includes(thread.parentId)) await updateAnnouncementBoard(); });
 
 client.login(process.env.DISCORD_TOKEN);
