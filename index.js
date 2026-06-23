@@ -78,12 +78,12 @@ async function updateAnnouncementBoard() {
                 const paddedDay = day.toString().padStart(2, '0');
 
                 // 🌟 날짜 뒤에 세로줄( ｜ ) 추가하여 정렬감 주기
-                displayTitle = `**[${paddedMonth}/${paddedDay}]** ｜ ${cleanedTitle}`;
+                displayTitle = `[${paddedMonth}/${paddedDay}] ｜ ${cleanedTitle}`;
             } else {
                 if (title.includes("일협")) {
                     sortKey = { month: 98, day: 98, isIlhyeop: true }; 
                     // 🌟 일협도 괄호 너비를 늘리고 세로줄 추가
-                    displayTitle = `**( 일 협 )** ｜ ${cleanedTitle}`;
+                    displayTitle = `( 일 협 ) ｜ ${cleanedTitle}`;
                 } else {
                     sortKey = { month: 99, day: 99, isIlhyeop: false };
                     displayTitle = cleanedTitle;
@@ -156,8 +156,6 @@ async function updateAnnouncementBoard() {
         // 1. 메인 타이틀과 인용구, 그리고 첫 구분선
         lines.push("# 📢 실시간 포스팅 현황판");
         lines.push("> 머미 및 기타 모집 일정을 실시간으로 안내합니다.");
-        lines.push("---");
-        lines.push(""); // 깔끔하게 한 칸 띄우기 (엔터 중복 방지)
         
         // --- 머미 파트 ---
         lines.push("## 🩸 머미 마감 일정");
@@ -167,8 +165,6 @@ async function updateAnnouncementBoard() {
             lines.push("*등록된 머미 마감 일정이 없습니다.* 🥲");
         }
         lines.push("");
-        lines.push("---"); // 구역 분리용 가로선
-        lines.push("");
 
         lines.push("## 🔎 머미 모집 중");
         if (murderRecruitingList.length > 0) {
@@ -176,8 +172,6 @@ async function updateAnnouncementBoard() {
         } else {
             lines.push("*모집 중인 머미 포스팅이 없습니다.* 👀");
         }
-        lines.push("");
-        lines.push("---");
         lines.push("");
 
         // --- 기타 모집 파트 ---
@@ -188,8 +182,6 @@ async function updateAnnouncementBoard() {
             lines.push("*등록된 기타 완료 일정이 없습니다.*");
         }
         lines.push("");
-        lines.push("---");
-        lines.push(""); 
 
         lines.push("## 🚀 기타 모집 중");
         if (otherRecruitingList.length > 0) {
