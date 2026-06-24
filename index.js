@@ -79,7 +79,6 @@ async function updateAnnouncementBoard() {
                 displayTitle += " ⭐NEW!⭐";
             }
 
-            // 백업본과 완전히 동일한 텍스트 구조
             const postData = {
                 sortKey,
                 text: `${displayTitle} ([이동](${url}))`
@@ -115,7 +114,7 @@ async function updateAnnouncementBoard() {
         const fetched = await textChannel.messages.fetch({ limit: 100 });
         if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(() => {});
 
-        // 🌟 [임베드 제목 + 백업본과 동일한 정석 리스트 본문] 전송 함수
+        // [임베드 제목 + 정석 리스트 본문] 전송 헬퍼 함수
         const sendSection = async (title, list, color, emptyMsg) => {
             // 1. 깔끔한 임베드 제목
             const embed = new EmbedBuilder()
@@ -124,9 +123,8 @@ async function updateAnnouncementBoard() {
             
             await textChannel.send({ embeds: [embed] });
 
-            // 2. 본문 전송 (백업본의 lines.push 로직 완벽 복구)
+            // 2. 본문 전송 (디스코드 정석 리스트 마크다운 사용)
             if (list.length > 0) {
-                // "1. 텍스트" 구조를 그대로 사용하여 디스코드가 알아서 예쁘게 들여쓰기를 맞추도록 냅둡니다.
                 const content = list.map((post, i) => `${i + 1}. ${post.text}`).join('\n');
                 
                 if (content.length > 1950) {
@@ -152,12 +150,16 @@ async function updateAnnouncementBoard() {
         };
 
         // 각 섹션을 순서대로 전송
-        await sendSection("🩸 머미 마감 일정", murderScheduleList, 0xFF0000, "등록된 머미 마감 일정이 없습니다. 🥲");
+        await sendSection("🩸 머미 일정", murderScheduleList, 0xFF0000, "등록된 머미 일정이 없습니다. 🥲");
         await sendSection("🔎 머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미 포스팅이 없습니다. 👀");
-        await sendSection("📌 기타 모집 완료", otherScheduleList, 0x0099FF, "등록된 기타 완료 일정이 없습니다.");
+        
+        // 🌟 기타 일정 전 줄에 엔터(빈 줄 공백) 추가
+        await textChannel.send("\u200B");
+        
+        await sendSection("📌 기타 일정", otherScheduleList, 0x0099FF, "등록된 기타 일정이 없습니다.");
         await sendSection("🚀 기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
 
-        console.log("✅ 백업본 기반 현황판 갱신 완료!");
+        console.log("✅ 요청 사항 반영 현황판 갱신 완료!");
     } catch (error) {
         console.error("오류 발생:", error);
     }
