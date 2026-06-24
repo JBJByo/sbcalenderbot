@@ -8,8 +8,9 @@ http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('🤖 디스코드 봇이 정상 구동 중입니다!');
 }).listen(PORT, () => {
-    console.log(`🌐 가짜 웹 서버가 ${PORT}번 포트에서 작동 중입니다.`);
+    console.log(`🌐 가짜 웹 서버가 ${PORT}번 포트에서 작동 중입니다. (Render 우회용)`);
 });
+// ====================================================================
 
 const client = new Client({
     intents: [
@@ -23,49 +24,137 @@ const MAIN_FORUM_ID = "1442443517313024100";
 const OTHER_FORUM_ID = "1518830708179730563";
 const ANNOUNCEMENT_TEXT_ID = "1515045364045053952";
 
-// [현황판 업데이트 함수]
-const updateAnnouncementBoard = async () => {
+// 정규표현식 패턴
+const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
+const MARAM_PATTERN = /[(\[][\s]*마감[\s]*[)\]]|마감/g; 
+const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
+
+client.on('ready', async (c) => {
+    console.log(`🤖 ${c.user.tag} 봇이 성공적으로 로그인했습니다!`);
+    await updateAnnouncementBoard();
+});
+
+async function updateAnnouncementBoard() {
     try {
-        const textChannel = await client.channels.fetch(ANNOUNCEMENT_TEXT_ID);
+        const textChannel = await client.channels.fetch(ANNOUNCEMENT_TEXT_ID).catch(() => null);
+        if (!textChannel) return;
+
+        const murderScheduleList = [];   
+        const murderRecruitingList = []; 
+        const otherScheduleList = [];
+        const otherRecruitingList = [];
+        const now = Date.now();
+
+        const processThread = (thread, scheduleArr, recruitingArr) => {
+            const title = thread.name;
+            if (title.includes("펑")) return;
+
+            const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
+            let sortKey;
+            let displayTitle;
+
+            let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '').replace(/\s+/g, ' ').trim();
+            const match = title.match(DATE_PATTERN);
+            
+            if (match) {
+                const month = parseInt(match[1], 10);
+                const day = parseInt(match[2], 10);
+                sortKey = { month, day, isIlhyeop: false };
+                cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
+                
+                // 🌟 날짜에 대괄호 [ ] 적용 및 세로줄 유지
+                displayTitle = `[${month}/${day}] ｜ ${cleanedTitle}`;
+            } else {
+                if (title.match(ILHYEOP_PATTERN)) {
+                    sortKey = { month: 98, day: 98, isIlhyeop: true }; 
+                    displayTitle = `[일협] ｜ ${cleanedTitle}`;
+                } else {
+                    sortKey = { month: 99, day: 99, isIlhyeop: false };
+                    displayTitle = cleanedTitle;
+                }
+            }
+
+            const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
+            if (now - lastTouchTime < 24 * 60 * 60 * 1000) {
+                displayTitle += " ⭐NEW!⭐";
+            }
+
+            const postData = {
+                sortKey,
+                text: `${displayTitle} ([이동](${url}))`
+            };
+
+            if (title.includes("마감") || title.includes("꽉")) {
+                scheduleArr.push(postData);
+            } else {
+                recruitingArr.push(postData);
+            }
+        };
+
+        const mainForum = await client.channels.fetch(MAIN_FORUM_ID).catch(() => null);
+        if (mainForum) {
+            const threads = await mainForum.threads.fetchActive();
+            for (const [_, thread] of threads.threads) processThread(thread, murderScheduleList, murderRecruitingList);
+        }
+
+        const otherForum = await client.channels.fetch(OTHER_FORUM_ID).catch(() => null);
+        if (otherForum) {
+            const threads = await otherForum.threads.fetchActive();
+            for (const [_, thread] of threads.threads) processThread(thread, otherScheduleList, otherRecruitingList);
+        }
+
+        const sortFunction = (a, b) => (a.sortKey.month !== b.sortKey.month) ? a.sortKey.month - b.sortKey.month : a.sortKey.day - b.sortKey.day;
         
-        // 1. 여기서 데이터를 추출하는 로직(기존 코드의 필터링 로직)을 거쳐 4개의 배열을 준비합니다.
-        // murderScheduleList, murderRecruitingList, otherScheduleList, otherRecruitingList 
-        
-        // 2. 임베드 생성 함수
+        murderScheduleList.sort(sortFunction);
+        murderRecruitingList.sort(sortFunction);
+        otherScheduleList.sort(sortFunction);
+        otherRecruitingList.sort(sortFunction);
+
+        // 🌟 임베드 생성 헬퍼 함수 (Fields 활용)
         const createEmbed = (title, list, color, emptyMsg) => {
             const embed = new EmbedBuilder()
                 .setTitle(title)
                 .setColor(color)
                 .setTimestamp();
 
-            if (list && list.length > 0) {
-                // Fields를 사용하여 가독성 확보 (16px 정도의 강조 효과를 위해 굵게 처리)
-                const content = list.map((item, i) => `**${i + 1}. ${item.text}**`).join('\n');
-                embed.setDescription(content);
+            if (list.length > 0) {
+                // Fields를 사용하여 텍스트 크기와 가독성 확보
+                list.forEach((post, i) => {
+                    embed.addFields({
+                        name: '\u200b', // 필드 제목을 보이지 않는 문자로 비워둠
+                        value: `**${i + 1}. ${post.text}**`, // 볼드 처리로 크게 보이게 유지
+                        inline: false
+                    });
+                });
             } else {
                 embed.setDescription(`*${emptyMsg}*`);
             }
             return embed;
         };
 
-        // 3. 임베드 4개 구성
+        // 4개의 임베드 구성 (머미: 빨강 / 기타: 파랑)
         const embeds = [
-            createEmbed("🔥 머미 마감 일정", murderScheduleList, 0xFF0000, "마감 임박 일정이 없습니다."),
-            createEmbed("🔎 머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미가 없습니다."),
-            createEmbed("💧 기타 일정", otherScheduleList, 0x0099FF, "등록된 기타 일정이 없습니다."),
-            createEmbed("🚀 기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 게시물이 없습니다.")
+            createEmbed("🩸 머미 마감 일정", murderScheduleList, 0xFF0000, "등록된 머미 마감 일정이 없습니다. 🥲"),
+            createEmbed("🔎 머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미 포스팅이 없습니다. 👀"),
+            createEmbed("📌 기타 모집 완료", otherScheduleList, 0x0099FF, "등록된 기타 완료 일정이 없습니다."),
+            createEmbed("🚀 기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.")
         ];
 
-        // 4. 메시지 갱신
-        const fetched = await textChannel.messages.fetch({ limit: 10 });
+        const fetched = await textChannel.messages.fetch({ limit: 100 });
         if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(() => {});
         
+        // 한 번의 메시지에 4개의 임베드 배열을 넣어 전송
         await textChannel.send({ embeds: embeds });
-        console.log("✅ 임베드 현황판 갱신 완료!");
-        
+
+        console.log("✅ 현황판 갱신 완료!");
     } catch (error) {
         console.error("오류 발생:", error);
     }
-};
+}
 
-// ... (이하 기존의 client.on 등 이벤트 리스너 코드 동일)
+const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
+client.on('threadCreate', async (t) => { if (watchChannels.includes(t.parentId)) await updateAnnouncementBoard(); });
+client.on('threadUpdate', async (b, a) => { if (watchChannels.includes(a.parentId)) await updateAnnouncementBoard(); });
+client.on('threadDelete', async (t) => { if (watchChannels.includes(t.parentId)) await updateAnnouncementBoard(); });
+
+client.login(process.env.DISCORD_TOKEN);
