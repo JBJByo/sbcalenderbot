@@ -120,7 +120,7 @@ async function updateAnnouncementBoard() {
 
         addSection("🩸 머미 마감 일정", murderScheduleList, "등록된 머미 마감 일정이 없습니다. 🥲");
         addSection("🔎 머미 모집 중", murderRecruitingList, "모집 중인 머미 포스팅이 없습니다. 👀");
-        addSection("📌 기타 모집 완료", otherScheduleList, "등록된 기타 완료 일정이 없습니다.");
+        addSection("📌 기타 일정", otherScheduleList, "등록된 기타 완료 일정이 없습니다.");
         addSection("🚀 기타 모집 중", otherRecruitingList, "모집 중인 기타 포스팅이 없습니다.");
 
         const chunks = [];
