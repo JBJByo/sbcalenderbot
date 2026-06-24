@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
@@ -62,7 +62,7 @@ async function updateAnnouncementBoard() {
                 sortKey = { month, day, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
                 
-                // 날짜에 대괄호 [ ] 적용 및 세로줄 유지
+                // 🌟 날짜에 대괄호 [ ] 적용 및 세로줄 유지
                 displayTitle = `[${month}/${day}] ｜ ${cleanedTitle}`;
             } else {
                 if (title.match(ILHYEOP_PATTERN)) {
@@ -79,10 +79,9 @@ async function updateAnnouncementBoard() {
                 displayTitle += " ⭐NEW!⭐";
             }
 
-            // 🌟 텍스트 제목 부분만 굵게(**) 처리하고 링크는 일반 텍스트로 분리
             const postData = {
                 sortKey,
-                text: `**${displayTitle}** ([이동](${url}))`
+                text: `${displayTitle} ([이동](${url}))`
             };
 
             if (title.includes("마감") || title.includes("꽉")) {
@@ -111,36 +110,34 @@ async function updateAnnouncementBoard() {
         otherScheduleList.sort(sortFunction);
         otherRecruitingList.sort(sortFunction);
 
-        // 🌟 임베드 생성 헬퍼 함수 (정식 리스트 문법으로 줄 간격 축소)
-        const createEmbed = (embedTitle, list, color, emptyMsg) => {
-            const embed = new EmbedBuilder()
-                .setTitle(embedTitle)
-                .setColor(color)
-                .setTimestamp();
-
-            if (list.length > 0) {
-                // "1. **텍스트**" 구조를 사용하여 디스코드가 목록으로 인식하게 만들어 간격을 붙입니다.
-                const content = list.map((post, i) => `${i + 1}. ${post.text}`).join('\n');
-                embed.setDescription(content);
-            } else {
-                embed.setDescription(`*${emptyMsg}*`);
-            }
-            return embed;
+        const lines = ["# 📢 실시간 포스팅 현황판", "> 머미 및 기타 모집 일정을 실시간으로 안내합니다."];
+        
+        const addSection = (title, list, emptyMsg) => {
+            lines.push(`## ${title}`);
+            if (list.length > 0) list.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
+            else lines.push(`*${emptyMsg}*`);
         };
 
-        // 4개의 임베드 구성
-        const embeds = [
-            createEmbed("🩸 머미 마감 일정", murderScheduleList, 0xFF0000, "등록된 머미 마감 일정이 없습니다. 🥲"),
-            createEmbed("🔎 머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미 포스팅이 없습니다. 👀"),
-            createEmbed("📌 기타 모집 완료", otherScheduleList, 0x0099FF, "등록된 기타 완료 일정이 없습니다."),
-            createEmbed("🚀 기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.")
-        ];
+        addSection("🩸 머미 마감 일정", murderScheduleList, "등록된 머미 마감 일정이 없습니다. 🥲");
+        addSection("🔎 머미 모집 중", murderRecruitingList, "모집 중인 머미 포스팅이 없습니다. 👀");
+        addSection("📌 기타 모집 완료", otherScheduleList, "등록된 기타 완료 일정이 없습니다.");
+        addSection("🚀 기타 모집 중", otherRecruitingList, "모집 중인 기타 포스팅이 없습니다.");
+
+        const chunks = [];
+        let currentChunk = "";
+        for (const line of lines) {
+            if ((currentChunk + line + "\n").length > 1900) {
+                chunks.push(currentChunk.trim());
+                currentChunk = line + "\n"; 
+            } else {
+                currentChunk += line + "\n";
+            }
+        }
+        if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
 
         const fetched = await textChannel.messages.fetch({ limit: 100 });
         if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(() => {});
-        
-        // 한 번의 메시지에 4개의 임베드 배열을 넣어 전송
-        await textChannel.send({ embeds: embeds });
+        for (const chunk of chunks) await textChannel.send(chunk);
 
         console.log("✅ 현황판 갱신 완료!");
     } catch (error) {
