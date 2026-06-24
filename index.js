@@ -79,7 +79,7 @@ async function updateAnnouncementBoard() {
                 displayTitle += " ⭐NEW!⭐";
             }
 
-            // 본문 텍스트 전체를 진하게(**) 만들기 위해 구조 변경
+            // 본문 텍스트에 굵게(**) 제거
             const postData = {
                 sortKey,
                 text: `${displayTitle} ([이동](${url}))`
@@ -124,15 +124,16 @@ async function updateAnnouncementBoard() {
             
             await textChannel.send({ embeds: [embed] });
 
-            // 2. 본문 내용 전송 (글씨 크기 극대화 및 줄간격 축소)
+            // 2. 본문 내용 전송 (굵기 제거 및 디스코드 자동 목록 공백 방지)
             if (list.length > 0) {
-                const content = list.map((post, i) => `**${i + 1}. ${post.text}**`).join('\n');
+                // '1.' 대신 마크다운 우회를 위해 '\.' 을 사용하거나 괄호를 써서 간격을 완전히 없앱니다.
+                const content = list.map((post, i) => `${i + 1}\\. ${post.text}`).join('\n');
                 
                 // 만약 하나의 섹션이 2000자 제한을 넘을 경우를 대비한 안전한 분할 전송(청크) 로직
                 if (content.length > 1950) {
                     let currentChunk = "";
                     for (let i = 0; i < list.length; i++) {
-                        const line = `**${i + 1}. ${list[i].text}**\n`;
+                        const line = `${i + 1}\\. ${list[i].text}\n`;
                         if ((currentChunk + line).length > 1950) {
                             await textChannel.send(currentChunk.trim());
                             currentChunk = line;
