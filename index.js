@@ -81,7 +81,7 @@ async function updateAnnouncementBoard() {
 
             const postData = {
                 sortKey,
-                text: `${displayTitle} ([이동](${url}))`
+                text: `${displayTitle} ([바로가기](${url}))`
             };
 
             if (title.includes("마감") || title.includes("꽉")) {
