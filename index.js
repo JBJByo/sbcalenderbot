@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
@@ -62,7 +62,7 @@ async function updateAnnouncementBoard() {
                 sortKey = { month, day, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
                 
-                // 🌟 날짜에 대괄호 [ ] 적용 및 세로줄 유지
+                // 날짜에 대괄호 [ ] 적용 및 세로줄 유지
                 displayTitle = `[${month}/${day}] ｜ ${cleanedTitle}`;
             } else {
                 if (title.match(ILHYEOP_PATTERN)) {
@@ -79,6 +79,7 @@ async function updateAnnouncementBoard() {
                 displayTitle += " ⭐NEW!⭐";
             }
 
+            // 본문 텍스트 전체를 진하게(**) 만들기 위해 구조 변경
             const postData = {
                 sortKey,
                 text: `${displayTitle} ([이동](${url}))`
@@ -110,36 +111,53 @@ async function updateAnnouncementBoard() {
         otherScheduleList.sort(sortFunction);
         otherRecruitingList.sort(sortFunction);
 
-        const lines = ["# 📢 실시간 포스팅 현황판", "> 머미 및 기타 모집 일정을 실시간으로 안내합니다."];
-        
-        const addSection = (title, list, emptyMsg) => {
-            lines.push(`## ${title}`);
-            if (list.length > 0) list.forEach((post, i) => lines.push(`${i + 1}. ${post.text}`));
-            else lines.push(`*${emptyMsg}*`);
-        };
-
-        addSection("🩸 머미 마감 일정", murderScheduleList, "등록된 머미 마감 일정이 없습니다. 🥲");
-        addSection("🔎 머미 모집 중", murderRecruitingList, "모집 중인 머미 포스팅이 없습니다. 👀");
-        addSection("📌 기타 일정", otherScheduleList, "등록된 기타 완료 일정이 없습니다.");
-        addSection("🚀 기타 모집 중", otherRecruitingList, "모집 중인 기타 포스팅이 없습니다.");
-
-        const chunks = [];
-        let currentChunk = "";
-        for (const line of lines) {
-            if ((currentChunk + line + "\n").length > 1900) {
-                chunks.push(currentChunk.trim());
-                currentChunk = line + "\n"; 
-            } else {
-                currentChunk += line + "\n";
-            }
-        }
-        if (currentChunk.trim().length > 0) chunks.push(currentChunk.trim());
-
+        // 모든 메시지 비우기
         const fetched = await textChannel.messages.fetch({ limit: 100 });
         if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(() => {});
-        for (const chunk of chunks) await textChannel.send(chunk);
 
-        console.log("✅ 현황판 갱신 완료!");
+        // 🌟 [임베드 제목 + 2000자 규정 일반 본문] 전송 헬퍼 함수
+        const sendSection = async (title, list, color, emptyMsg) => {
+            // 1. 제목용 임베드 전송 (깔끔한 테두리와 제목 표시)
+            const embed = new EmbedBuilder()
+                .setTitle(title)
+                .setColor(color);
+            
+            await textChannel.send({ embeds: [embed] });
+
+            // 2. 본문 내용 전송 (글씨 크기 극대화 및 줄간격 축소)
+            if (list.length > 0) {
+                const content = list.map((post, i) => `**${i + 1}. ${post.text}**`).join('\n');
+                
+                // 만약 하나의 섹션이 2000자 제한을 넘을 경우를 대비한 안전한 분할 전송(청크) 로직
+                if (content.length > 1950) {
+                    let currentChunk = "";
+                    for (let i = 0; i < list.length; i++) {
+                        const line = `**${i + 1}. ${list[i].text}**\n`;
+                        if ((currentChunk + line).length > 1950) {
+                            await textChannel.send(currentChunk.trim());
+                            currentChunk = line;
+                        } else {
+                            currentChunk += line;
+                        }
+                    }
+                    if (currentChunk.trim().length > 0) {
+                        await textChannel.send(currentChunk.trim());
+                    }
+                } else {
+                    await textChannel.send(content);
+                }
+            } else {
+                await textChannel.send(`*${emptyMsg}*`);
+            }
+        };
+
+        // 각 섹션을 순서대로 전송
+        await sendSection("🩸 머미 마감 일정", murderScheduleList, 0xFF0000, "등록된 머미 마감 일정이 없습니다. 🥲");
+        await sendSection("🔎 머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미 포스팅이 없습니다. 👀");
+        await sendSection("📌 기타 모집 완료", otherScheduleList, 0x0099FF, "등록된 기타 완료 일정이 없습니다.");
+        await sendSection("🚀 기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
+
+        console.log("✅ 하이브리드 현황판 갱신 완료!");
     } catch (error) {
         console.error("오류 발생:", error);
     }
