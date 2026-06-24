@@ -1,38 +1,71 @@
-const { EmbedBuilder } = require('discord.js'); // 상단에 추가
+require('dotenv').config();
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const http = require('http');
 
-// ... (기존 코드 생략)
+// ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
+const PORT = process.env.PORT || 3008;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('🤖 디스코드 봇이 정상 구동 중입니다!');
+}).listen(PORT, () => {
+    console.log(`🌐 가짜 웹 서버가 ${PORT}번 포트에서 작동 중입니다.`);
+});
 
-// 현황판 갱신 로직 수정
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+    ],
+});
+
+const MAIN_FORUM_ID = "1442443517313024100";
+const OTHER_FORUM_ID = "1518830708179730563";
+const ANNOUNCEMENT_TEXT_ID = "1515045364045053952";
+
+// [현황판 업데이트 함수]
 const updateAnnouncementBoard = async () => {
-    // ... (리스트 추출 및 정렬 로직 동일)
+    try {
+        const textChannel = await client.channels.fetch(ANNOUNCEMENT_TEXT_ID);
+        
+        // 1. 여기서 데이터를 추출하는 로직(기존 코드의 필터링 로직)을 거쳐 4개의 배열을 준비합니다.
+        // murderScheduleList, murderRecruitingList, otherScheduleList, otherRecruitingList 
+        
+        // 2. 임베드 생성 함수
+        const createEmbed = (title, list, color, emptyMsg) => {
+            const embed = new EmbedBuilder()
+                .setTitle(title)
+                .setColor(color)
+                .setTimestamp();
 
-    const createEmbed = (title, list, color, emptyMsg) => {
-        const embed = new EmbedBuilder()
-            .setTitle(`📢 ${title}`)
-            .setColor(color)
-            .setTimestamp();
+            if (list && list.length > 0) {
+                // Fields를 사용하여 가독성 확보 (16px 정도의 강조 효과를 위해 굵게 처리)
+                const content = list.map((item, i) => `**${i + 1}. ${item.text}**`).join('\n');
+                embed.setDescription(content);
+            } else {
+                embed.setDescription(`*${emptyMsg}*`);
+            }
+            return embed;
+        };
 
-        if (list.length > 0) {
-            // Fields를 사용하여 텍스트 가독성 확보
-            const description = list.map((post, i) => `${i + 1}. ${post.text}`).join('\n');
-            embed.setDescription(description);
-        } else {
-            embed.setDescription(`*${emptyMsg}*`);
-        }
-        return embed;
-    };
+        // 3. 임베드 4개 구성
+        const embeds = [
+            createEmbed("🔥 머미 마감 일정", murderScheduleList, 0xFF0000, "마감 임박 일정이 없습니다."),
+            createEmbed("🔎 머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미가 없습니다."),
+            createEmbed("💧 기타 일정", otherScheduleList, 0x0099FF, "등록된 기타 일정이 없습니다."),
+            createEmbed("🚀 기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 게시물이 없습니다.")
+        ];
 
-    const embeds = [
-        createEmbed("머미 마감 일정", murderScheduleList, 0xFF0000, "등록된 머미 마감 일정이 없습니다. 🥲"),
-        createEmbed("머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미 포스팅이 없습니다. 👀"),
-        createEmbed("기타 모집 완료", otherScheduleList, 0x0000FF, "등록된 기타 완료 일정이 없습니다."),
-        createEmbed("기타 모집 중", otherRecruitingList, 0x0000FF, "모집 중인 기타 포스팅이 없습니다.")
-    ];
-
-    // 기존 메시지 삭제 후 새 임베드 전송
-    const fetched = await textChannel.messages.fetch({ limit: 10 });
-    if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(() => {});
-    
-    // 임베드 4개 한 번에 전송
-    await textChannel.send({ embeds: embeds });
+        // 4. 메시지 갱신
+        const fetched = await textChannel.messages.fetch({ limit: 10 });
+        if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(() => {});
+        
+        await textChannel.send({ embeds: embeds });
+        console.log("✅ 임베드 현황판 갱신 완료!");
+        
+    } catch (error) {
+        console.error("오류 발생:", error);
+    }
 };
+
+// ... (이하 기존의 client.on 등 이벤트 리스너 코드 동일)
