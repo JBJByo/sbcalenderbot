@@ -79,9 +79,10 @@ async function updateAnnouncementBoard() {
                 displayTitle += " ⭐NEW!⭐";
             }
 
+            // 🌟 텍스트 제목 부분만 굵게(**) 처리하고 링크는 일반 텍스트로 분리
             const postData = {
                 sortKey,
-                text: `${displayTitle} ([이동](${url}))`
+                text: `**${displayTitle}** ([이동](${url}))`
             };
 
             if (title.includes("마감") || title.includes("꽉")) {
@@ -110,16 +111,16 @@ async function updateAnnouncementBoard() {
         otherScheduleList.sort(sortFunction);
         otherRecruitingList.sort(sortFunction);
 
-        // 🌟 임베드 생성 헬퍼 함수 (Description을 활용하여 간격 축소)
-        const createEmbed = (title, list, color, emptyMsg) => {
+        // 🌟 임베드 생성 헬퍼 함수 (정식 리스트 문법으로 줄 간격 축소)
+        const createEmbed = (embedTitle, list, color, emptyMsg) => {
             const embed = new EmbedBuilder()
-                .setTitle(title)
+                .setTitle(embedTitle)
                 .setColor(color)
                 .setTimestamp();
 
             if (list.length > 0) {
-                // 배열의 모든 항목을 하나의 문자열로 합치고, \n(줄바꿈)으로 연결하여 간격을 촘촘하게 만듭니다.
-                const content = list.map((post, i) => `**${i + 1}. ${post.text}**`).join('\n');
+                // "1. **텍스트**" 구조를 사용하여 디스코드가 목록으로 인식하게 만들어 간격을 붙입니다.
+                const content = list.map((post, i) => `${i + 1}. ${post.text}`).join('\n');
                 embed.setDescription(content);
             } else {
                 embed.setDescription(`*${emptyMsg}*`);
