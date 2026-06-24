@@ -62,7 +62,7 @@ async function updateAnnouncementBoard() {
                 sortKey = { month, day, isIlhyeop: false };
                 cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
                 
-                // 🌟 날짜에 대괄호 [ ] 적용 및 세로줄 유지
+                // 날짜에 대괄호 [ ] 적용 및 세로줄 유지
                 displayTitle = `[${month}/${day}] ｜ ${cleanedTitle}`;
             } else {
                 if (title.match(ILHYEOP_PATTERN)) {
@@ -110,7 +110,7 @@ async function updateAnnouncementBoard() {
         otherScheduleList.sort(sortFunction);
         otherRecruitingList.sort(sortFunction);
 
-        // 🌟 임베드 생성 헬퍼 함수 (Fields 활용)
+        // 🌟 임베드 생성 헬퍼 함수 (Description을 활용하여 간격 축소)
         const createEmbed = (title, list, color, emptyMsg) => {
             const embed = new EmbedBuilder()
                 .setTitle(title)
@@ -118,21 +118,16 @@ async function updateAnnouncementBoard() {
                 .setTimestamp();
 
             if (list.length > 0) {
-                // Fields를 사용하여 텍스트 크기와 가독성 확보
-                list.forEach((post, i) => {
-                    embed.addFields({
-                        name: '\u200b', // 필드 제목을 보이지 않는 문자로 비워둠
-                        value: `**${i + 1}. ${post.text}**`, // 볼드 처리로 크게 보이게 유지
-                        inline: false
-                    });
-                });
+                // 배열의 모든 항목을 하나의 문자열로 합치고, \n(줄바꿈)으로 연결하여 간격을 촘촘하게 만듭니다.
+                const content = list.map((post, i) => `**${i + 1}. ${post.text}**`).join('\n');
+                embed.setDescription(content);
             } else {
                 embed.setDescription(`*${emptyMsg}*`);
             }
             return embed;
         };
 
-        // 4개의 임베드 구성 (머미: 빨강 / 기타: 파랑)
+        // 4개의 임베드 구성
         const embeds = [
             createEmbed("🩸 머미 마감 일정", murderScheduleList, 0xFF0000, "등록된 머미 마감 일정이 없습니다. 🥲"),
             createEmbed("🔎 머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미 포스팅이 없습니다. 👀"),
