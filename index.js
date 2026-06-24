@@ -156,8 +156,8 @@ async function updateAnnouncementBoard() {
         // 🌟 기타 일정 전 줄에 엔터(빈 줄 공백) 추가
         await textChannel.send("\u200B");
         
-        await sendSection("📌 기타 일정", otherScheduleList, 0x0099FF, "등록된 기타 일정이 없습니다.");
-        await sendSection("🚀 기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
+        await sendSection("🚀 기타 일정", otherScheduleList, 0x0099FF, "등록된 기타 일정이 없습니다.");
+        await sendSection("🔎 기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
 
         console.log("✅ 요청 사항 반영 현황판 갱신 완료!");
     } catch (error) {
