@@ -79,6 +79,7 @@ async function updateAnnouncementBoard() {
                 displayTitle += " ⭐NEW!⭐";
             }
 
+            // 백업본과 완전히 동일한 텍스트 구조
             const postData = {
                 sortKey,
                 text: `${displayTitle} ([이동](${url}))`
@@ -114,29 +115,24 @@ async function updateAnnouncementBoard() {
         const fetched = await textChannel.messages.fetch({ limit: 100 });
         if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(() => {});
 
-        // 🌟 [임베드 제목 + 2000자 규정 일반 본문] 전송 헬퍼 함수
+        // 🌟 [임베드 제목 + 백업본과 동일한 정석 리스트 본문] 전송 함수
         const sendSection = async (title, list, color, emptyMsg) => {
+            // 1. 깔끔한 임베드 제목
             const embed = new EmbedBuilder()
                 .setTitle(title)
                 .setColor(color);
             
             await textChannel.send({ embeds: [embed] });
 
+            // 2. 본문 전송 (백업본의 lines.push 로직 완벽 복구)
             if (list.length > 0) {
-                // 🌟 한 자리 숫자(1~9) 앞에 숫자와 너비가 같은 특수 공백(\u2007)을 추가하여 일렬 정렬
-                const content = list.map((post, i) => {
-                    const num = i + 1;
-                    const paddedNum = num < 10 ? `\u2007${num}` : `${num}`;
-                    return `${paddedNum}\\. ${post.text}`;
-                }).join('\n');
+                // "1. 텍스트" 구조를 그대로 사용하여 디스코드가 알아서 예쁘게 들여쓰기를 맞추도록 냅둡니다.
+                const content = list.map((post, i) => `${i + 1}. ${post.text}`).join('\n');
                 
                 if (content.length > 1950) {
                     let currentChunk = "";
                     for (let i = 0; i < list.length; i++) {
-                        const num = i + 1;
-                        const paddedNum = num < 10 ? `\u2007${num}` : `${num}`;
-                        const line = `${paddedNum}\\. ${list[i].text}\n`;
-                        
+                        const line = `${i + 1}. ${list[i].text}\n`;
                         if ((currentChunk + line).length > 1950) {
                             await textChannel.send(currentChunk.trim());
                             currentChunk = line;
@@ -161,7 +157,7 @@ async function updateAnnouncementBoard() {
         await sendSection("📌 기타 모집 완료", otherScheduleList, 0x0099FF, "등록된 기타 완료 일정이 없습니다.");
         await sendSection("🚀 기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
 
-        console.log("✅ 하이브리드 현황판 정렬 갱신 완료!");
+        console.log("✅ 백업본 기반 현황판 갱신 완료!");
     } catch (error) {
         console.error("오류 발생:", error);
     }
