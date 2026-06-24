@@ -150,13 +150,13 @@ async function updateAnnouncementBoard() {
         };
 
         // 각 섹션을 순서대로 전송
-        await sendSection("🩸"" 머미 일정", murderScheduleList, 0xFF0000, "등록된 머미 일정이 없습니다. 🥲");
+        await sendSection("🩸  머미 일정", murderScheduleList, 0xFF0000, "등록된 머미 일정이 없습니다. 🥲");
         await textChannel.send("\u200B");
-        await sendSection("🔎"" 머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미 포스팅이 없습니다. 👀");
+        await sendSection("🔎  머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미 포스팅이 없습니다. 👀");
         await textChannel.send("\u200B");
-        await sendSection("🚀"" 기타 일정", otherScheduleList, 0x0099FF, "등록된 기타 일정이 없습니다.");
+        await sendSection("🚀  기타 일정", otherScheduleList, 0x0099FF, "등록된 기타 일정이 없습니다.");
         await textChannel.send("\u200B");
-        await sendSection("🔎"" 기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
+        await sendSection("🔎  기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
 
         console.log("✅ 요청 사항 반영 현황판 갱신 완료!");
     } catch (error) {
