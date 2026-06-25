@@ -17,7 +17,7 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers, // 💡 역할 회수를 위해 필수
+        GatewayIntentBits.GuildMembers, 
     ],
 });
 
@@ -26,27 +26,27 @@ const MAIN_FORUM_ID = "1442443517313024100";
 const OTHER_FORUM_ID = "1518830708179730563";
 const ANNOUNCEMENT_TEXT_ID = "1515045364045053952";
 
-// [신규 설정] 버튼 채널 및 방별 카테고리/역할 매핑 데이터
-const BUTTON_CHANNEL_ID = "1519706442209300521";
+// 💡 [중요] 버튼과 가이드가 들어갈 '#관전채팅-이용' 채널 ID를 꼭 확인해주세요!
+const BUTTON_CHANNEL_ID = "1519706442209300521"; 
 
 const ROOM_CONFIG = {
     'btn_spectate_a': {
-        roomName: 'a방-관전채팅',
+        roomName: 'A방-관전채팅',
         categoryId: '1442440229696045130',
         roleId: '1519716902589563071',
-        label: 'A방 관전채팅 생성'
+        label: 'A방 관전채팅 신청'
     },
     'btn_spectate_b': {
-        roomName: 'b방-관전채팅',
+        roomName: 'B방-관전채팅',
         categoryId: '1469981664531972291',
         roleId: '1519716927881084980',
-        label: 'B방 관전채팅 생성'
+        label: 'B방 관전채팅 신청'
     },
     'btn_spectate_c': {
-        roomName: 'c방-관전채팅',
+        roomName: 'C방-관전채팅',
         categoryId: '1443538692869329088',
         roleId: '1519716938949857360',
-        label: 'C방 관전채팅 생성'
+        label: 'C방 관전채팅 신청'
     }
 };
 
@@ -55,10 +55,64 @@ const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
 const MARAM_PATTERN = /[(\[][\s]*마감[\s]*[)\]]|마감/g; 
 const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
 
+// 봇이 준비되었을 때 실행되는 구역
 client.on('ready', async (c) => {
     console.log(`🤖 ${c.user.tag} 봇이 성공적으로 로그인했습니다!`);
     await updateAnnouncementBoard();
+    
+    // 💡 [자동화 추가] 봇이 켜질 때 가이드와 버튼이 없다면 자동으로 전송합니다.
+    await autoDeployGuideAndButtons();
 });
+
+// ================= [ 가이드 및 버튼 자동/수동 빌더 함수 ] =================
+async function generateGuideMessage(channel) {
+    const guideEmbed = new EmbedBuilder()
+        .setTitle('📖 관전채팅 이용 가이드')
+        .setColor(0x00AAFF) 
+        .setDescription(
+            `원하는 방의 관전채팅 신청 버튼을 누르면 비공개 채팅에 참여하실 수 있습니다.\n` +
+            `쾌적하고 원활한 이용을 위해 아래 유의사항을 반드시 지켜주세요.\n` +
+            `### 🚨 유의사항\n` +
+            `> ⚠️ 관전에 참여하시는 분만 이용해주세요.\n` +
+            `> ⚠️ 스포일러 방지를 위해 게임 종료 후 반드시 [관전 종료] 버튼을 눌러주세요.\n` +
+            `> ⚠️ 위 유의사항 미준수 시, 경고가 누적될 수 있습니다.`
+        );
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('btn_spectate_a').setLabel(ROOM_CONFIG['btn_spectate_a'].label).setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('btn_spectate_b').setLabel(ROOM_CONFIG['btn_spectate_b'].label).setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('btn_spectate_c').setLabel(ROOM_CONFIG['btn_spectate_c'].label).setStyle(ButtonStyle.Danger)
+    );
+
+    await channel.send({ embeds: [guideEmbed], components: [row] });
+}
+
+// 봇 켜질 때 실행되는 중복 방지 배포 함수
+async function autoDeployGuideAndButtons() {
+    try {
+        const targetChannel = await client.channels.fetch(BUTTON_CHANNEL_ID).catch(() => null);
+        if (!targetChannel) {
+            console.log("⚠️ 가이드 버튼을 생성할 채널을 찾을 수 없습니다. BUTTON_CHANNEL_ID를 확인하세요.");
+            return;
+        }
+
+        // 채널의 최근 메시지 10개를 긁어와서 이미 임베드나 버튼이 배치되어 있는지 검사
+        const messages = await targetChannel.messages.fetch({ limit: 10 });
+        const hasGuide = messages.some(msg => msg.embeds.length > 0 || msg.components.length > 0);
+        
+        // 채널이 텅 비어있거나 가이드가 없다면 즉시 생성
+        if (!hasGuide) {
+            console.log("📢 채널이 비어있어 관전 가이드와 버튼을 자동으로 생성합니다...");
+            await generateGuideMessage(targetChannel);
+            console.log("✅ 가이드 및 버튼 생성 완료!");
+        } else {
+            console.log("ℹ️ 채널에 이미 생성된 가이드가 존재하여 자동 생성을 건너뜁니다.");
+        }
+    } catch (err) {
+        console.error("자동 배포 진행 중 에러 발생:", err);
+    }
+}
+
 
 // ================= [ 기존 기능: 공지사항 현황판 자동 갱신 로직 ] =================
 async function updateAnnouncementBoard() {
@@ -184,26 +238,17 @@ client.on('threadUpdate', async (b, a) => { if (watchChannels.includes(a.parentI
 client.on('threadDelete', async (t) => { if (watchChannels.includes(t.parentId)) await updateAnnouncementBoard(); });
 
 
-// ================= [ 명령어 처리 : 메인 채널 생성 버튼 소환용 ] =================
+// ================= [ 명령어 처리 : 수동 강제 재생성용 ] =================
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // 지정된 채널에서 !버튼생성 입력 시 메인 관전방 생성 버튼 리스트 전송
+    // 만약 채널 청소를 했거나 강제로 다시 가이드 세트를 뽑고 싶을 때 채널 안에서 !버튼생성 입력
     if (message.content === '!버튼생성' && message.channel.id === BUTTON_CHANNEL_ID) {
         try {
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('btn_spectate_a').setLabel(ROOM_CONFIG['btn_spectate_a'].label).setStyle(ButtonStyle.Primary),
-                new ButtonBuilder().setCustomId('btn_spectate_b').setLabel(ROOM_CONFIG['btn_spectate_b'].label).setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId('btn_spectate_c').setLabel(ROOM_CONFIG['btn_spectate_c'].label).setStyle(ButtonStyle.Danger)
-            );
-
-            await message.channel.send({
-                content: '📌 아래 버튼을 누르면 해당 방의 **비공개 관전 채팅 채널**이 생성되고 관전 권한(역할)이 부여됩니다.',
-                components: [row]
-            });
+            await generateGuideMessage(message.channel);
             await message.delete().catch(() => null);
         } catch (err) {
-            console.error("버튼 메인 메뉴 생성 실패:", err);
+            console.error("수동 버튼 메뉴 생성 실패:", err);
         }
     }
 });
@@ -231,87 +276,91 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             // 중복 생성 검사
-            const existingChannel = guild.channels.cache.find(ch => ch.parentId === config.categoryId && ch.name === config.roomName);
-            if (existingChannel) {
-                return interaction.editReply({ content: `✅ 관전 역할이 부여되었습니다! 이미 생성된 채널이 존재합니다. 👉 ${existingChannel}` });
+            let targetChannel = guild.channels.cache.find(ch => ch.parentId === config.categoryId && ch.name === config.roomName);
+            let isAlreadyExist = !!targetChannel;
+            
+            if (!targetChannel) {
+                // 비공개 채널 신규 생성
+                targetChannel = await guild.channels.create({
+                    name: config.roomName,
+                    type: ChannelType.GuildText,
+                    parent: config.categoryId,
+                    permissionOverwrites: [
+                        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+                        { id: config.roleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+                        { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels] }
+                    ],
+                });
+
+                // 새로 개설된 관전 채팅방 내부에 [관전 종료] 버튼 배치
+                const closeRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('btn_close_spectate')
+                        .setLabel('🔒 관전 종료 및 방 삭제')
+                        .setStyle(ButtonStyle.Danger)
+                );
+
+                await targetChannel.send({
+                    content: `📢 **${config.label}** 완료! 개설된 비공개 관전 채팅방입니다.\n현재 관전 역할을 가진 인원만 이 채널을 볼 수 있습니다.\n\n**[안내]** 관전 및 게임이 모두 완전히 끝나면 아래 버튼을 눌러 방을 폭파해 주세요.`,
+                    components: [closeRow]
+                });
             }
 
-            // 비공개 채널 신규 생성
-            const newChannel = await guild.channels.create({
-                name: config.roomName,
-                type: ChannelType.GuildText,
-                parent: config.categoryId,
-                permissionOverwrites: [
-                    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-                    { id: config.roleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
-                    { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels] }
-                ],
-            });
+            const responseText = isAlreadyExist 
+                ? `✅ 관전 역할이 부여되었습니다! 이미 생성된 채널이 존재합니다. 👉 ${targetChannel}`
+                : `🎉 완료되었습니다! 👉 ${targetChannel}`;
 
-            // 💡 새로 개설된 관전 채팅방 내부에 [관전 종료] 버튼 배치
-            const closeRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId('btn_close_spectate')
-                    .setLabel('🔒 관전 종료 및 방 삭제')
-                    .setStyle(ButtonStyle.Danger)
-            );
-
-            await newChannel.send({
-                content: `👁️ **${config.label}**을 통해 개설된 비공개 관전 채팅방입니다.\n현재 관전 역할을 가진 인원만 이 채널을 볼 수 있습니다.\n\n**[안내]** 관전 및 게임이 모두 완전히 끝나면 아래 버튼을 눌러 방을 폭파해 주세요.`,
-                components: [closeRow]
-            });
-
-            await interaction.editReply({ content: `🎉 채널이 생성되었고 관전 역할이 부여되었습니다. 👉 ${newChannel}` });
+            await interaction.editReply({ content: responseText });
+            
+            setTimeout(async () => {
+                await interaction.deleteReply().catch(() => null);
+            }, 10000);
 
         } catch (error) {
             console.error("채널 생성 프로세스 오류:", error);
-            await interaction.editReply({ content: '❌ 채널을 생성하거나 역할을 부여하는 중 오류가 발생했습니다. 권한 설정을 확인해주세요.' });
+            await interaction.editReply({ content: '❌ 채널을 생성하거나 역할을 부여하는 중 오류가 발생했습니다.' });
         }
     }
 
     // 2. 관전방 내부에서 [🔒 관전 종료 및 방 삭제] 버튼을 누른 경우
     if (interaction.customId === 'btn_close_spectate') {
         const currentChannel = interaction.channel;
-        
-        // 현재 채널 이름에 해당하는 설정을 대조하여 매핑 데이터(역할 ID 등) 획득
         const roomKey = Object.keys(ROOM_CONFIG).find(key => ROOM_CONFIG[key].roomName === currentChannel.name);
         
         if (!roomKey) {
-            return interaction.reply({ content: '❌ 이 채널은 자동 정리 대상 관전방이 아니거나 이름 규칙이 다릅니다.', ephemeral: true });
+            return interaction.reply({ content: '❌ 자동 정리 대상 관전방이 아닙니다.', ephemeral: true });
         }
 
         const config = ROOM_CONFIG[roomKey];
-        const guild = interaction.guild;
-
-        // 버튼 클릭자에게 즉시 응답 (디스코드 3초 만료 방지)
-        await interaction.reply({ content: '🔒 관전 정리를 시작합니다. 채널에 진행 상황이 표시됩니다.' });
+        
+        await interaction.reply({ content: '🔒 관전방 삭제 및 역할 회수 작업을 시작합니다!' });
+        setTimeout(async () => { await interaction.deleteReply().catch(() => null); }, 2000);
 
         try {
-            await currentChannel.send('⚠️ 관전 종료 절차가 발동되었습니다. 서버원들의 관전 역할을 회수하고 있습니다...');
+            await currentChannel.send('⚠️ 관전 종료 절차가 발동되었습니다. 참여 멤버들의 역할을 정리하는 중입니다...');
 
-            // 서버 전체 멤버 명단 로드 (캐시 누락 방지)
-            const allMembers = await guild.members.fetch();
-            const targetMembers = allMembers.filter(member => member.roles.cache.has(config.roleId));
+            const channelMembers = currentChannel.members;
+            const targetMembers = channelMembers.filter(member => member.roles.cache.has(config.roleId));
 
-            // 해당 방 관전 역할 전원 일괄 해제
             let removedCount = 0;
             for (const [_, member] of targetMembers) {
-                await member.roles.remove(config.roleId).catch(err => console.error(`${member.user.tag} 역할 회수 실패:`, err));
+                await member.roles.remove(config.roleId).catch(() => null);
                 removedCount++;
             }
 
             await currentChannel.send(`✅ 총 ${removedCount}명의 관전 역할을 정상 회수했습니다.\n스포일러 방지를 위해 **5초 후에 이 채널이 영구 삭제**됩니다.`);
 
-            // 5초 대기 후 채널 폭파
             setTimeout(async () => {
                 await currentChannel.delete().catch(() => null);
             }, 5000);
 
         } catch (error) {
             console.error('관전방 버튼 종료 처리 중 오류:', error);
-            await currentChannel.send('❌ 역할을 회수하거나 방을 삭제하는 과정에서 오류가 발생했습니다. 봇의 권한을 체크해주세요.');
+            await currentChannel.send('❌ 역할을 회수하거나 방을 삭제하는 과정에서 오류가 발생했습니다.');
         }
     }
 });
+
+client.on('error', console.error);
 
 client.login(process.env.DISCORD_TOKEN);
