@@ -34,19 +34,19 @@ const ROOM_CONFIG = {
         roomName: 'A방-관전채팅',
         categoryId: '1442440229696045130',
         roleId: '1519716902589563071',
-        label: 'A방 관전채팅 생성'
+        label: 'A방 관전채팅 신청'
     },
     'btn_spectate_b': {
         roomName: 'B방-관전채팅',
         categoryId: '1469981664531972291',
         roleId: '1519716927881084980',
-        label: 'B방 관전채팅 생성'
+        label: 'B방 관전채팅 신청'
     },
     'btn_spectate_c': {
         roomName: 'C방-관전채팅',
         categoryId: '1443538692869329088',
         roleId: '1519716938949857360',
-        label: 'C방 관전채팅 생성'
+        label: 'C방 관전채팅 신청'
     }
 };
 
