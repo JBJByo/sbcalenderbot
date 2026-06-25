@@ -17,7 +17,7 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers, 
+        GatewayIntentBits.GuildMembers, // 💡 역할 회수를 위해 필수
     ],
 });
 
@@ -31,22 +31,22 @@ const BUTTON_CHANNEL_ID = "1519706442209300521";
 
 const ROOM_CONFIG = {
     'btn_spectate_a': {
-        roomName: 'A방-관전채팅',
+        roomName: 'a방-관전채팅',
         categoryId: '1442440229696045130',
         roleId: '1519716902589563071',
-        label: 'A방 관전채팅 신청'
+        label: 'A방 관전채팅 생성'
     },
     'btn_spectate_b': {
-        roomName: 'B방-관전채팅',
+        roomName: 'b방-관전채팅',
         categoryId: '1469981664531972291',
         roleId: '1519716927881084980',
-        label: 'B방 관전채팅 신청'
+        label: 'B방 관전채팅 생성'
     },
     'btn_spectate_c': {
-        roomName: 'C방-관전채팅',
+        roomName: 'c방-관전채팅',
         categoryId: '1443538692869329088',
         roleId: '1519716938949857360',
-        label: 'C방 관전채팅 신청'
+        label: 'C방 관전채팅 생성'
     }
 };
 
@@ -188,6 +188,7 @@ client.on('threadDelete', async (t) => { if (watchChannels.includes(t.parentId))
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
+    // 지정된 채널에서 !버튼생성 입력 시 메인 관전방 생성 버튼 리스트 전송
     if (message.content === '!버튼생성' && message.channel.id === BUTTON_CHANNEL_ID) {
         try {
             const row = new ActionRowBuilder().addComponents(
@@ -215,8 +216,6 @@ client.on('interactionCreate', async (interaction) => {
     // 1. [관전 채널 생성] 버튼을 누른 경우
     if (ROOM_CONFIG[interaction.customId]) {
         const config = ROOM_CONFIG[interaction.customId];
-        
-        // 💡 화면 도배 방지: 대기 메시지를 전송하고 3초 뒤 자동 삭제되도록 구현
         await interaction.deferReply({ ephemeral: true });
 
         try {
@@ -232,72 +231,72 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             // 중복 생성 검사
-            let targetChannel = guild.channels.cache.find(ch => ch.parentId === config.categoryId && ch.name === config.roomName);
-            
-            if (!targetChannel) {
-                // 비공개 채널 신규 생성
-                targetChannel = await guild.channels.create({
-                    name: config.roomName,
-                    type: ChannelType.GuildText,
-                    parent: config.categoryId,
-                    permissionOverwrites: [
-                        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
-                        { id: config.roleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
-                        { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels] }
-                    ],
-                });
-
-                // 새로 개설된 관전 채팅방 내부에 [관전 종료] 버튼 배치
-                const closeRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('btn_close_spectate')
-                        .setLabel('🔒 관전 종료 및 방 삭제')
-                        .setStyle(ButtonStyle.Danger)
-                );
-
-                await targetChannel.send({
-                    content: `👁️ **${config.label}**을 통해 개설된 비공개 관전 채팅방입니다.\n현재 관전 역할을 가진 인원만 이 채널을 볼 수 있습니다.\n\n**[안내]** 관전 및 게임이 모두 완전히 끝나면 아래 버튼을 눌러 방을 폭파해 주세요.`,
-                    components: [closeRow]
-                });
+            const existingChannel = guild.channels.cache.find(ch => ch.parentId === config.categoryId && ch.name === config.roomName);
+            if (existingChannel) {
+                return interaction.editReply({ content: `✅ 관전 역할이 부여되었습니다! 이미 생성된 채널이 존재합니다. 👉 ${existingChannel}` });
             }
 
-            // 💡 "본인만 볼 수 있어요" 알림창이 누적되지 않도록, 10초 뒤 응답 메시지를 자동으로 비웁니다.
-            await interaction.editReply({ content: `🎉 완료되었습니다! 👉 ${targetChannel}` });
-            setTimeout(async () => {
-                await interaction.deleteReply().catch(() => null);
-            }, 10000);
+            // 비공개 채널 신규 생성
+            const newChannel = await guild.channels.create({
+                name: config.roomName,
+                type: ChannelType.GuildText,
+                parent: config.categoryId,
+                permissionOverwrites: [
+                    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+                    { id: config.roleId, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory] },
+                    { id: client.user.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels] }
+                ],
+            });
+
+            // 💡 새로 개설된 관전 채팅방 내부에 [관전 종료] 버튼 배치
+            const closeRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('btn_close_spectate')
+                    .setLabel('🔒 관전 종료 및 방 삭제')
+                    .setStyle(ButtonStyle.Danger)
+            );
+
+            await newChannel.send({
+                content: `👁️ **${config.label}**을 통해 개설된 비공개 관전 채팅방입니다.\n현재 관전 역할을 가진 인원만 이 채널을 볼 수 있습니다.\n\n**[안내]** 관전 및 게임이 모두 완전히 끝나면 아래 버튼을 눌러 방을 폭파해 주세요.`,
+                components: [closeRow]
+            });
+
+            await interaction.editReply({ content: `🎉 채널이 생성되었고 관전 역할이 부여되었습니다. 👉 ${newChannel}` });
 
         } catch (error) {
             console.error("채널 생성 프로세스 오류:", error);
-            await interaction.editReply({ content: '❌ 채널을 생성하거나 역할을 부여하는 중 오류가 발생했습니다.' });
+            await interaction.editReply({ content: '❌ 채널을 생성하거나 역할을 부여하는 중 오류가 발생했습니다. 권한 설정을 확인해주세요.' });
         }
     }
 
     // 2. 관전방 내부에서 [🔒 관전 종료 및 방 삭제] 버튼을 누른 경우
     if (interaction.customId === 'btn_close_spectate') {
         const currentChannel = interaction.channel;
+        
+        // 현재 채널 이름에 해당하는 설정을 대조하여 매핑 데이터(역할 ID 등) 획득
         const roomKey = Object.keys(ROOM_CONFIG).find(key => ROOM_CONFIG[key].roomName === currentChannel.name);
         
         if (!roomKey) {
-            return interaction.reply({ content: '❌ 자동 정리 대상 관전방이 아닙니다.', ephemeral: true });
+            return interaction.reply({ content: '❌ 이 채널은 자동 정리 대상 관전방이 아니거나 이름 규칙이 다릅니다.', ephemeral: true });
         }
 
         const config = ROOM_CONFIG[roomKey];
-        
-        // 버튼 누른 순간 안내 팝업 전송 후 즉시 자동 삭제 트리거
-        await interaction.reply({ content: '🔒 관전방 삭제 및 역할 회수 작업을 시작합니다!' });
-        setTimeout(async () => { await interaction.deleteReply().catch(() => null); }, 2000);
+        const guild = interaction.guild;
+
+        // 버튼 클릭자에게 즉시 응답 (디스코드 3초 만료 방지)
+        await interaction.reply({ content: '🔒 관전 정리를 시작합니다. 채널에 진행 상황이 표시됩니다.' });
 
         try {
-            await currentChannel.send('⚠️ 관전 종료 절차가 발동되었습니다. 참여 멤버들의 역할을 정리하는 중입니다...');
+            await currentChannel.send('⚠️ 관전 종료 절차가 발동되었습니다. 서버원들의 관전 역할을 회수하고 있습니다...');
 
-            // 💡 [에러 해결책]: 서버 전체를 긁지 않고, 현재 관전 채널의 멤버 명단만 가져와 역할을 가진 사람들 필터링 (레이트 리밋 우회)
-            const channelMembers = currentChannel.members;
-            const targetMembers = channelMembers.filter(member => member.roles.cache.has(config.roleId));
+            // 서버 전체 멤버 명단 로드 (캐시 누락 방지)
+            const allMembers = await guild.members.fetch();
+            const targetMembers = allMembers.filter(member => member.roles.cache.has(config.roleId));
 
+            // 해당 방 관전 역할 전원 일괄 해제
             let removedCount = 0;
             for (const [_, member] of targetMembers) {
-                await member.roles.remove(config.roleId).catch(() => null);
+                await member.roles.remove(config.roleId).catch(err => console.error(`${member.user.tag} 역할 회수 실패:`, err));
                 removedCount++;
             }
 
@@ -310,7 +309,7 @@ client.on('interactionCreate', async (interaction) => {
 
         } catch (error) {
             console.error('관전방 버튼 종료 처리 중 오류:', error);
-            await currentChannel.send('❌ 역할을 회수하거나 방을 삭제하는 과정에서 오류가 발생했습니다.');
+            await currentChannel.send('❌ 역할을 회수하거나 방을 삭제하는 과정에서 오류가 발생했습니다. 봇의 권한을 체크해주세요.');
         }
     }
 });
