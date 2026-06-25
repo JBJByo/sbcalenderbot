@@ -31,19 +31,19 @@ const BUTTON_CHANNEL_ID = "1519706442209300521";
 
 const ROOM_CONFIG = {
     'btn_spectate_a': {
-        roomName: 'a방-관전채팅',
+        roomName: 'A방-관전채팅',
         categoryId: '1442440229696045130',
         roleId: '1519716902589563071',
         label: 'A방 관전채팅 생성'
     },
     'btn_spectate_b': {
-        roomName: 'b방-관전채팅',
+        roomName: 'B방-관전채팅',
         categoryId: '1469981664531972291',
         roleId: '1519716927881084980',
         label: 'B방 관전채팅 생성'
     },
     'btn_spectate_c': {
-        roomName: 'c방-관전채팅',
+        roomName: 'C방-관전채팅',
         categoryId: '1443538692869329088',
         roleId: '1519716938949857360',
         label: 'C방 관전채팅 생성'
