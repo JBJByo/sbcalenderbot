@@ -84,7 +84,7 @@ async function getSpectateStatusText(guild) {
         }
     }
     
-    text += `\n*※ 버튼을 누르면 실시간으로 현황이 업데이트됩니다.*`;
+    text += `\n*※ 실수로 다른 방에 들어가지 않게 조심해주세요.*`;
     return text;
 }
 
