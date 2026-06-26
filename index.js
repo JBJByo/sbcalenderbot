@@ -45,7 +45,7 @@ const ROOM_CONFIG = {
 // 정규표현식 패턴 (기존 코드)
 const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
 const MARAM_PATTERN = /[(\[][\s]*마감[\s]*[)\]]|마감/g; 
-const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
+const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일정협의|일협)/g; 
 
 client.on('ready', async (c) => {
     console.log(`🤖 ${c.user.tag} 봇이 성공적으로 로그인했습니다!`);
@@ -66,12 +66,10 @@ async function getSpectateStatusText(guild) {
     ];
 
     for (const r of rooms) {
-        // 💡 [수정]: 전체 fetch 에러를 피하기 위해, 지정된 특정 카테고리 채널을 fetch해서 그 아래 자식 채널들(children)만 완벽하게 탐색합니다.
         const categoryChannel = guild.channels.cache.get(r.cat) || await guild.channels.fetch(r.cat).catch(() => null);
         
         let targetChannel = null;
         if (categoryChannel && categoryChannel.children) {
-            // 카테고리 내부의 텍스트 채널 중 이름이 일치하는 방 탐색
             targetChannel = categoryChannel.children.cache.find(ch => 
                 ch && 
                 ch.type === ChannelType.GuildText && 
@@ -96,7 +94,6 @@ async function refreshSpectateStatus(guild) {
         const targetChannel = await client.channels.fetch(BUTTON_CHANNEL_ID).catch(() => null);
         if (!targetChannel) return;
 
-        // 최근 메시지 긁어오기
         const messages = await targetChannel.messages.fetch({ limit: 50 });
         const statusMessages = messages.filter(msg => msg.author.id === client.user.id && msg.content.includes('📊 실시간 관전방 개설 현황'));
         
@@ -104,7 +101,6 @@ async function refreshSpectateStatus(guild) {
             await msg.delete().catch(() => null);
         }
         
-        // 💡 업데이트 직전, 혹시 모를 캐시 동기화를 위해 각 카테고리 방들의 최신 상태를 강제 페치
         const cats = ['1442440229696045130', '1469981664531972291', '1443538692869329088'];
         for (const catId of cats) {
             await guild.channels.fetch(catId).catch(() => null);
@@ -124,23 +120,30 @@ async function generateGuideMessage(channel) {
         .setColor(0x00AAFF) 
         .setDescription(
             `원하는 방의 버튼을 눌러 비공개 채널을 생성하거나 관전 역할을 부여받을 수 있습니다.\n` +
-            `쾌적하고 원활한 이용을 위해 아래 유의사항을 반드시 지켜주세요.\n` +
+            `쾌적하고 원활한 이용을 위해 아래 유의사항을 반드시 지켜주세요.\n\n` +
+
+            `① 해당하는 방의 관전 신청을 눌러주세요.\n` +
+            `② 해당하는 방의 채팅 생성을 눌러주세요.\n` +
+            `③ 해당하는 방으로 이동해주세요.\n\n` +
+
             `### 🚨 유의사항\n` +
             ` ⚠️ 관전에 참여하시는 분만 이용해주세요.\n` +
             ` ⚠️ 스포일러 방지를 위해 게임 종료 후 반드시 [관전 종료] 버튼을 눌러주세요.\n` +
             ` ⚠️ 위 유의사항 미준수 시, 경고가 누적될 수 있습니다.`
         );
 
+    // 💡 [수정] 상단 줄(row1)을 역할 버튼(관전 신청)으로 지정
     const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('btn_create_a').setLabel(ROOM_CONFIG['btn_create_a'].label).setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('btn_create_b').setLabel(ROOM_CONFIG['btn_create_b'].label).setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('btn_create_c').setLabel(ROOM_CONFIG['btn_create_c'].label).setStyle(ButtonStyle.Danger)
-    );
-
-    const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('btn_role_a').setLabel(ROOM_CONFIG['btn_role_a'].label).setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('btn_role_b').setLabel(ROOM_CONFIG['btn_role_b'].label).setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId('btn_role_c').setLabel(ROOM_CONFIG['btn_role_c'].label).setStyle(ButtonStyle.Danger)
+    );
+
+    // 💡 [수정] 하단 줄(row2)을 채널 생성 버튼(채팅 생성)으로 지정
+    const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('btn_create_a').setLabel(ROOM_CONFIG['btn_create_a'].label).setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('btn_create_b').setLabel(ROOM_CONFIG['btn_create_b'].label).setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('btn_create_c').setLabel(ROOM_CONFIG['btn_create_c'].label).setStyle(ButtonStyle.Danger)
     );
 
     await channel.send({ embeds: [guideEmbed], components: [row1, row2] });
@@ -342,7 +345,6 @@ client.on('interactionCreate', async (interaction) => {
 
             // B. [채널 생성 버튼]인 경우 ➔ 역할은 주지 않고 채널만 개설
             if (config.type === 'channel') {
-                // 특정 카테고리를 타격하여 하위 채널 목록 수집 (안전형)
                 const categoryChannel = guild.channels.cache.get(config.categoryId) || await guild.channels.fetch(config.categoryId).catch(() => null);
                 
                 let targetChannel = null;
@@ -424,7 +426,6 @@ client.on('interactionCreate', async (interaction) => {
         });
 
         console.log("==================");
-
 
         const roomKey = Object.keys(ROOM_CONFIG).find(key => 
             ROOM_CONFIG[key].categoryId === currentChannel.parentId
