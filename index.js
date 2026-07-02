@@ -177,28 +177,58 @@ async function updateAnnouncementBoard() {
             const title = thread.name;
             if (title.includes("펑")) return;
 
+            // 💡 [해결 1] 한국 시간(KST) 기준으로 현재 날짜 구하기 (Render 서버 등 해외 서버 구동 대비)
+            const kstDateString = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Asia/Seoul',
+                month: 'numeric',
+                day: 'numeric'
+            }).format(new Date());
+            const [curMonth, curDay] = kstDateString.split('/').map(Number);
+
             const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
             let sortKey;
-            let displayTitle;
+            let displayTitlePrefix = "";
 
-            let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '').replace(/\s+/g, ' ').trim();
+            // 1차 제목 정리: 마감, 일협 등의 키워드 우선 제거
+            let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '');
             const match = title.match(DATE_PATTERN);
             
             if (match) {
                 const month = parseInt(match[1], 10);
                 const day = parseInt(match[2], 10);
+
+                // 💡 [해결 1] 지난 일정 필터링 (스킵 처리)
+                let isPast = false;
+                // 현재 월보다 이전 월이면서, 연말/연초 역전(예: 11월에 1월 일정 작성)이 아닌 경우
+                if (month < curMonth && (curMonth - month) < 6) isPast = true;
+                // 이번 달인데 어제 날짜인 경우
+                if (month === curMonth && day < curDay) isPast = true;
+
+                if (isPast) return; // 지난 일정이면 리스트에 추가하지 않고 바로 함수 종료!
+
                 sortKey = { month, day, isIlhyeop: false };
-                cleanedTitle = cleanedTitle.replace(match[0], '').replace(/\s+/g, ' ').trim();
-                displayTitle = `[${month}/${day}] ｜ ${cleanedTitle}`;
+                cleanedTitle = cleanedTitle.replace(match[0], ''); // 추출한 날짜 문자열 제거
+                displayTitlePrefix = `[${month}/${day}] ｜ `;
+            } else if (title.match(ILHYEOP_PATTERN)) {
+                sortKey = { month: 98, day: 98, isIlhyeop: true }; 
+                displayTitlePrefix = `[일협] ｜ `;
             } else {
-                if (title.match(ILHYEOP_PATTERN)) {
-                    sortKey = { month: 98, day: 98, isIlhyeop: true }; 
-                    displayTitle = `[일협] ｜ ${cleanedTitle}`;
-                } else {
-                    sortKey = { month: 99, day: 99, isIlhyeop: false };
-                    displayTitle = cleanedTitle;
-                }
+                sortKey = { month: 99, day: 99, isIlhyeop: false };
+                displayTitlePrefix = ``;
             }
+
+            // 💡 [해결 2] 찌꺼기 괄호 및 특수문자 깔끔하게 정리
+            // 1. [], (), ( / ), [ - ] 등 안에 텍스트가 없고 기호만 남은 괄호 완전 삭제
+            const ARTIFACT_PATTERN = /[\[\(][\s/,\-]*[\]\)]/g;
+            cleanedTitle = cleanedTitle.replace(ARTIFACT_PATTERN, '');
+            
+            // 2. 제목 맨 앞이나 맨 뒤에 불필요하게 남은 슬래시, 하이픈, 닫는 괄호 등 지우기
+            cleanedTitle = cleanedTitle.replace(/^[\]\)/\-,\s]+|[\[\(/\-,\s]+$/g, '');
+            
+            // 3. 다중 공백을 하나로 압축하고 양끝 공백 제거
+            cleanedTitle = cleanedTitle.replace(/\s+/g, ' ').trim();
+
+            let displayTitle = displayTitlePrefix + cleanedTitle;
 
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
             if (now - lastTouchTime < 24 * 60 * 60 * 1000) {
