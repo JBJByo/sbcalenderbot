@@ -36,7 +36,7 @@ const ROOM_CONFIG = {
     'btn_create_c': { roomKey: 'C', roomName: 'C방-관전채팅', categoryId: '1443538692869329088', roleId: '1519716938949857360', displayName: 'C방 관전 신청' }
 };
 
-// 💡 정규표현식 패턴 업데이트 (완료 포함)
+// 정규표현식 패턴 (완료 키워드 통합)
 const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
 const MARAM_PATTERN = /[(\[][\s]*(?:마감|완료)[\s]*[)\]]|(?:마감|완료)/g; 
 const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
@@ -49,6 +49,7 @@ client.on('ready', async (c) => {
 
 // ================= [ 가이드, 버튼, 실시간 현황판 빌더 함수 ] =================
 
+// 실시간 현황판 텍스트를 만들어주는 헬퍼 함수
 async function getSpectateStatusText(guild) {
     let text = `### 📊 실시간 관전방 개설 현황\n`;
     
@@ -81,6 +82,7 @@ async function getSpectateStatusText(guild) {
     return text;
 }
 
+// 기존 현황판 메시지를 삭제하고, 맨 아래에 완전히 새로 전송하는 함수
 async function refreshSpectateStatus(guild) {
     try {
         const targetChannel = await client.channels.fetch(BUTTON_CHANNEL_ID).catch(() => null);
@@ -159,7 +161,7 @@ async function autoDeployGuideAndButtons() {
 }
 
 
-// ================= [ 공지사항 현황판 자동 갱신 로직 (시간 파싱, 완료 추가) ] =================
+// ================= [ 공지사항 현황판 자동 갱신 로직 ] =================
 async function updateAnnouncementBoard() {
     try {
         const textChannel = await client.channels.fetch(ANNOUNCEMENT_TEXT_ID).catch(() => null);
@@ -190,15 +192,14 @@ async function updateAnnouncementBoard() {
             // 1차 제목 정리: 마감/완료, 일협 등의 키워드를 임시 변수에서 정제
             let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '');
 
-            // 💡 날짜와 함께 시간(HH:MM 또는 HH시 MM분)까지 한 번에 추출
-            const DETAILED_DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?(?:\s+([0-2]?\d)[:시]\s*([0-5]\d)?(?:분)?)?/;
-            const match = title.match(DETAILED_DATE_PATTERN);
-            
-            if (match) {
-                const month = parseInt(match[1], 10);
-                const day = parseInt(match[2], 10);
-                const hour = match[3] ? parseInt(match[3], 10) : null;
-                const minute = match[4] ? parseInt(match[4], 10) : 0;
+            // 💡 날짜와 시간을 각각 "독립적으로" 탐색 (인식률 및 정확도 대폭 개선)
+            const dateMatch = title.match(/(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/);
+            const timeMatch = title.match(/(?:(오전|오후|am|pm|AM|PM)\s*)?([0-2]?\d)[:시](?!\s*간)(?:\s*([0-5]\d)분?)?/);
+
+            // 날짜가 발견된 경우
+            if (dateMatch) {
+                const month = parseInt(dateMatch[1], 10);
+                const day = parseInt(dateMatch[2], 10);
 
                 // 지난 일정 필터링
                 let isPast = false;
@@ -209,35 +210,54 @@ async function updateAnnouncementBoard() {
                 // 정렬 키값 설정
                 sortKey = { month, day, isIlhyeop: false };
                 
-                // 원본에서 날짜/시간과 이를 감싸던 괄호까지 통째로 날림
-                const rawMatchStr = match[0];
+                // 원본에서 날짜 텍스트와 주변 껍데기 괄호 제거
                 const escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const advancedEraser = new RegExp(`[\\s\\[\\(]*${escapeRegExp(rawMatchStr)}[\\s\\]\\)]*`, 'g');
-                cleanedTitle = cleanedTitle.replace(advancedEraser, ' ');
+                const dateEraser = new RegExp(`[\\s\\[\\(]*${escapeRegExp(dateMatch[0])}[\\s\\]\\)]*`, 'g');
+                cleanedTitle = cleanedTitle.replace(dateEraser, ' ');
 
-                // 시간이 적혀있다면 [월/일] ｜ HH:MM 형식을 빌드
-                if (hour !== null) {
+                // 시간 파싱 및 [HH:MM] 포맷 빌드
+                let timePrefix = "";
+                if (timeMatch) {
+                    let hour = parseInt(timeMatch[2], 10);
+                    let minute = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+                    const ampm = timeMatch[1];
+
+                    // 오전/오후 및 AM/PM 24시간제 정정 변환
+                    if (ampm) {
+                        const lowerAmpm = ampm.toLowerCase();
+                        if ((lowerAmpm === '오후' || lowerAmpm === 'pm') && hour < 12) hour += 12;
+                        if ((lowerAmpm === '오전' || lowerAmpm === 'am') && hour === 12) hour = 0;
+                    }
+
+                    // 원본에서 시간 텍스트와 주변 껍데기 괄호 제거
+                    const timeEraser = new RegExp(`[\\s\\[\\(]*${escapeRegExp(timeMatch[0])}[\\s\\]\\)]*`, 'g');
+                    cleanedTitle = cleanedTitle.replace(timeEraser, ' ');
+
                     const pad = (num) => String(num).padStart(2, '0');
-                    displayTitlePrefix = `[${month}/${day}] ｜ ${pad(hour)}:${pad(minute)} `;
-                } else {
-                    displayTitlePrefix = `[${month}/${day}] ｜ `;
+                    timePrefix = `[${pad(hour)}:${pad(minute)}] `; 
                 }
-            } else if (title.match(ILHYEOP_PATTERN)) {
+
+                // 중간에 덩그러니 남은 요일 텍스트 지우기
+                cleanedTitle = cleanedTitle.replace(/(?:월|화|수|목|금|토|일)요일/g, ' ');
+                displayTitlePrefix = `[${month}/${day}] ｜ ${timePrefix}`;
+                
+            } else {
+                // 날짜가 아예 적혀있지 않은 경우 -> 무조건 [일협] 카테고리로 분류
                 sortKey = { month: 98, day: 98, isIlhyeop: true }; 
                 displayTitlePrefix = `[일협] ｜ `;
-            } else {
-                sortKey = { month: 99, day: 99, isIlhyeop: false };
-                displayTitlePrefix = ``;
             }
 
             // 💡 괄호 및 찌꺼기 정제 ('오프' 키워드는 보호)
             cleanedTitle = cleanedTitle.replace(/[\[\(]\s*오프\s*[\]\)]/g, '___OFFLINE___');
             cleanedTitle = cleanedTitle.replace(/오프/g, '___OFFLINE___');
+            
             cleanedTitle = cleanedTitle.replace(/[\[\(][\s/,\-~]*[\]\)]/g, ' ');
-            cleanedTitle = cleanedTitle.replace(/[\[\(\]\)]/g, ' ');
+            cleanedTitle = cleanedTitle.replace(/[\[\(\]\)]/g, ' '); // 불필요한 모든 잔여 껍데기 괄호 제거
+            
             cleanedTitle = cleanedTitle.replace(/___OFFLINE___/g, '[오프]');
 
-            cleanedTitle = cleanedTitle.replace(/^[\]\)/\-,\s|]+|[\[\(/\-,\s|]+$/g, '');
+            // 제목 앞뒤에 붙은 불필요한 특수문자(? 포함) 및 다중 공백 정리
+            cleanedTitle = cleanedTitle.replace(/^[\]\)/\-,\s|?]+|[\[\(/\-,\s|?]+$/g, '');
             cleanedTitle = cleanedTitle.replace(/\s+/g, ' ').trim();
 
             let displayTitle = displayTitlePrefix + cleanedTitle;
@@ -252,7 +272,7 @@ async function updateAnnouncementBoard() {
                 text: `${displayTitle} ([바로가기](${url}))`
             };
 
-            // 완료 조건 추가됨
+            // 완료된 방도 마감(일정) 배열에 들어가도록 조건 처리
             if (title.includes("마감") || title.includes("꽉") || title.includes("완료")) {
                 scheduleArr.push(postData);
             } else {
