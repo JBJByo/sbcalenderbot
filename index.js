@@ -38,7 +38,7 @@ const ROOM_CONFIG = {
 
 // 정규표현식 패턴 (기존 코드)
 const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
-const MARAM_PATTERN = /[(\[][\s]*마감[\s]*[)\]]|마감/g; 
+const MARAM_PATTERN= /[(\[][\s]*(?:마감|완료)[\s]*[)\]]|(?:마감|완료)/g;
 const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
 
 client.on('ready', async (c) => {
@@ -240,7 +240,7 @@ async function updateAnnouncementBoard() {
                 text: `${displayTitle} ([바로가기](${url}))`
             };
 
-            if (title.includes("마감") || title.includes("꽉")) {
+            if (title.includes("마감") || title.includes("꽉") || title.includes("완료")) {
                 scheduleArr.push(postData);
             } else {
                 recruitingArr.push(postData);
