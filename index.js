@@ -36,9 +36,9 @@ const ROOM_CONFIG = {
     'btn_create_c': { roomKey: 'C', roomName: 'C방-관전채팅', categoryId: '1443538692869329088', roleId: '1519716938949857360', displayName: 'C방 관전 신청' }
 };
 
-// 정규표현식 패턴 (기존 코드)
+// 💡 정규표현식 패턴 업데이트 (완료 포함)
 const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
-const MARAM_PATTERN= /[(\[][\s]*(?:마감|완료)[\s]*[)\]]|(?:마감|완료)/g;
+const MARAM_PATTERN = /[(\[][\s]*(?:마감|완료)[\s]*[)\]]|(?:마감|완료)/g; 
 const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
 
 client.on('ready', async (c) => {
@@ -49,7 +49,6 @@ client.on('ready', async (c) => {
 
 // ================= [ 가이드, 버튼, 실시간 현황판 빌더 함수 ] =================
 
-// 실시간 현황판 텍스트를 만들어주는 헬퍼 함수
 async function getSpectateStatusText(guild) {
     let text = `### 📊 실시간 관전방 개설 현황\n`;
     
@@ -82,7 +81,6 @@ async function getSpectateStatusText(guild) {
     return text;
 }
 
-// 기존 현황판 메시지를 삭제하고, 맨 아래에 완전히 새로 전송하는 함수
 async function refreshSpectateStatus(guild) {
     try {
         const targetChannel = await client.channels.fetch(BUTTON_CHANNEL_ID).catch(() => null);
@@ -161,7 +159,7 @@ async function autoDeployGuideAndButtons() {
 }
 
 
-// ================= [ 기존 기능: 공지사항 현황판 자동 갱신 로직 ] =================
+// ================= [ 공지사항 현황판 자동 갱신 로직 (시간 파싱, 완료 추가) ] =================
 async function updateAnnouncementBoard() {
     try {
         const textChannel = await client.channels.fetch(ANNOUNCEMENT_TEXT_ID).catch(() => null);
@@ -177,7 +175,7 @@ async function updateAnnouncementBoard() {
             const title = thread.name;
             if (title.includes("펑")) return;
 
-            // 💡 [해결 1] 한국 시간(KST) 기준으로 현재 날짜 구하기 (Render 서버 등 해외 서버 구동 대비)
+            // 💡 한국 시간(KST) 기준으로 현재 날짜 구하기
             const kstDateString = new Intl.DateTimeFormat('en-US', {
                 timeZone: 'Asia/Seoul',
                 month: 'numeric',
@@ -189,26 +187,41 @@ async function updateAnnouncementBoard() {
             let sortKey;
             let displayTitlePrefix = "";
 
-            // 1차 제목 정리: 마감, 일협 등의 키워드 우선 제거
+            // 1차 제목 정리: 마감/완료, 일협 등의 키워드를 임시 변수에서 정제
             let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '');
-            const match = title.match(DATE_PATTERN);
+
+            // 💡 날짜와 함께 시간(HH:MM 또는 HH시 MM분)까지 한 번에 추출
+            const DETAILED_DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?(?:\s+([0-2]?\d)[:시]\s*([0-5]\d)?(?:분)?)?/;
+            const match = title.match(DETAILED_DATE_PATTERN);
             
             if (match) {
                 const month = parseInt(match[1], 10);
                 const day = parseInt(match[2], 10);
+                const hour = match[3] ? parseInt(match[3], 10) : null;
+                const minute = match[4] ? parseInt(match[4], 10) : 0;
 
-                // 💡 [해결 1] 지난 일정 필터링 (스킵 처리)
+                // 지난 일정 필터링
                 let isPast = false;
-                // 현재 월보다 이전 월이면서, 연말/연초 역전(예: 11월에 1월 일정 작성)이 아닌 경우
                 if (month < curMonth && (curMonth - month) < 6) isPast = true;
-                // 이번 달인데 어제 날짜인 경우
                 if (month === curMonth && day < curDay) isPast = true;
+                if (isPast) return; 
 
-                if (isPast) return; // 지난 일정이면 리스트에 추가하지 않고 바로 함수 종료!
-
+                // 정렬 키값 설정
                 sortKey = { month, day, isIlhyeop: false };
-                cleanedTitle = cleanedTitle.replace(match[0], ''); // 추출한 날짜 문자열 제거
-                displayTitlePrefix = `[${month}/${day}] ｜ `;
+                
+                // 원본에서 날짜/시간과 이를 감싸던 괄호까지 통째로 날림
+                const rawMatchStr = match[0];
+                const escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const advancedEraser = new RegExp(`[\\s\\[\\(]*${escapeRegExp(rawMatchStr)}[\\s\\]\\)]*`, 'g');
+                cleanedTitle = cleanedTitle.replace(advancedEraser, ' ');
+
+                // 시간이 적혀있다면 [월/일] ｜ HH:MM 형식을 빌드
+                if (hour !== null) {
+                    const pad = (num) => String(num).padStart(2, '0');
+                    displayTitlePrefix = `[${month}/${day}] ｜ ${pad(hour)}:${pad(minute)} `;
+                } else {
+                    displayTitlePrefix = `[${month}/${day}] ｜ `;
+                }
             } else if (title.match(ILHYEOP_PATTERN)) {
                 sortKey = { month: 98, day: 98, isIlhyeop: true }; 
                 displayTitlePrefix = `[일협] ｜ `;
@@ -217,15 +230,14 @@ async function updateAnnouncementBoard() {
                 displayTitlePrefix = ``;
             }
 
-            // 💡 [해결 2] 찌꺼기 괄호 및 특수문자 깔끔하게 정리
-            // 1. [], (), ( / ), [ - ] 등 안에 텍스트가 없고 기호만 남은 괄호 완전 삭제
-            const ARTIFACT_PATTERN = /[\[\(][\s/,\-]*[\]\)]/g;
-            cleanedTitle = cleanedTitle.replace(ARTIFACT_PATTERN, '');
-            
-            // 2. 제목 맨 앞이나 맨 뒤에 불필요하게 남은 슬래시, 하이픈, 닫는 괄호 등 지우기
-            cleanedTitle = cleanedTitle.replace(/^[\]\)/\-,\s]+|[\[\(/\-,\s]+$/g, '');
-            
-            // 3. 다중 공백을 하나로 압축하고 양끝 공백 제거
+            // 💡 괄호 및 찌꺼기 정제 ('오프' 키워드는 보호)
+            cleanedTitle = cleanedTitle.replace(/[\[\(]\s*오프\s*[\]\)]/g, '___OFFLINE___');
+            cleanedTitle = cleanedTitle.replace(/오프/g, '___OFFLINE___');
+            cleanedTitle = cleanedTitle.replace(/[\[\(][\s/,\-~]*[\]\)]/g, ' ');
+            cleanedTitle = cleanedTitle.replace(/[\[\(\]\)]/g, ' ');
+            cleanedTitle = cleanedTitle.replace(/___OFFLINE___/g, '[오프]');
+
+            cleanedTitle = cleanedTitle.replace(/^[\]\)/\-,\s|]+|[\[\(/\-,\s|]+$/g, '');
             cleanedTitle = cleanedTitle.replace(/\s+/g, ' ').trim();
 
             let displayTitle = displayTitlePrefix + cleanedTitle;
@@ -240,6 +252,7 @@ async function updateAnnouncementBoard() {
                 text: `${displayTitle} ([바로가기](${url}))`
             };
 
+            // 완료 조건 추가됨
             if (title.includes("마감") || title.includes("꽉") || title.includes("완료")) {
                 scheduleArr.push(postData);
             } else {
@@ -334,7 +347,6 @@ client.on('messageCreate', async (message) => {
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
-    // 관전 신청 버튼을 누른 경우
     if (ROOM_CONFIG[interaction.customId]) {
         const config = ROOM_CONFIG[interaction.customId];
         await interaction.deferReply({ flags: [ 'Ephemeral' ] });
@@ -349,7 +361,6 @@ client.on('interactionCreate', async (interaction) => {
                 return;
             }
 
-            // 1. 해당 카테고리 내에서 이미 방이 생성되어 있는지 확인
             const categoryChannel = guild.channels.cache.get(config.categoryId) || await guild.channels.fetch(config.categoryId).catch(() => null);
             
             let targetChannel = null;
@@ -363,7 +374,6 @@ client.on('interactionCreate', async (interaction) => {
             
             let isAlreadyExist = !!targetChannel;
             
-            // 2. 방이 없다면 새로 생성
             if (!targetChannel) {
                 targetChannel = await guild.channels.create({
                     name: config.roomName,
@@ -390,7 +400,6 @@ client.on('interactionCreate', async (interaction) => {
                 });
             }
 
-            // 3. 방 유무와 상관없이 무조건 유저에게 역할 부여
             let responseText = "";
             if (member.roles.cache.has(config.roleId)) {
                 responseText = isAlreadyExist 
@@ -405,7 +414,6 @@ client.on('interactionCreate', async (interaction) => {
 
             await interaction.editReply({ content: responseText });
             
-            // 방 상태 변동이 있었으므로 현황판 최신화 (신규 생성 시에만 딜레이 후 갱신)
             if (!isAlreadyExist) {
                 setTimeout(async () => {
                     await refreshSpectateStatus(guild);
@@ -422,7 +430,6 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 관전방 내부에서 [🔒 관전 종료 및 방 삭제] 버튼을 누른 경우
     if (interaction.customId === 'btn_close_spectate') {
         const currentChannel = interaction.channel;
         const guild = interaction.guild;
@@ -449,10 +456,8 @@ client.on('interactionCreate', async (interaction) => {
                 }
             }
 
-            // 채널 삭제
             await currentChannel.delete('관전 종료 버튼에 의한 자동 삭제').catch(console.error);
 
-            // 방 삭제 반영을 위해 1.5초 딜레이 후 현황판 재생성
             setTimeout(async () => {
                 await refreshSpectateStatus(guild);
             }, 1500);
