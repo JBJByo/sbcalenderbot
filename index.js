@@ -342,7 +342,7 @@ async function updateAnnouncementBoard() {
         const refreshRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('btn_refresh_schedule')
-                .setLabel('🔄 일정 수동 새로고침')
+                .setLabel('🔄 일정 새로고침')
                 .setStyle(ButtonStyle.Secondary)
         );
 
