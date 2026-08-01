@@ -205,7 +205,15 @@ async function updateAnnouncementBoard() {
                 let isPast = false;
                 if (month < curMonth && (curMonth - month) < 6) isPast = true;
                 if (month === curMonth && day < curDay) isPast = true;
-                if (isPast) return; 
+                
+                if (isPast) {
+                    console.log(`📁 날짜가 지난 포스트 닫기 처리됨: ${title}`);
+                    // 포스트 닫기(보관)만 실행
+                    thread.edit({ 
+                        archived: true 
+                    }).catch(console.error);
+                    return; 
+                }
 
                 // 정렬 키값 설정
                 sortKey = { month, day, isIlhyeop: false };
