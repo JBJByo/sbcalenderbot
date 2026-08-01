@@ -336,16 +336,42 @@ async function updateAnnouncementBoard() {
         await textChannel.send("\u200B");
         await sendSection("🔎  기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
 
+        // ---------- [수동 새로고침 버튼 추가] ----------
+        const refreshRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('btn_refresh_schedule')
+                .setLabel('🔄 일정 수동 새로고침')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+        await textChannel.send({ 
+            content: "💡 일정이 꼬이거나 최신화가 필요하면 아래 버튼을 눌러주세요.", 
+            components: [refreshRow] 
+        });
+        // -----------------------------------------------
+
         console.log("✅ 요청 사항 반영 현황판 갱신 완료!");
     } catch (error) {
         console.error("오류 발생:", error);
     }
 }
 
+// ================= [ 동시성 문제 해결: 디바운싱 처리 ] =================
+let scheduleUpdateTimer = null;
+
+function requestScheduleUpdate() {
+    if (scheduleUpdateTimer) clearTimeout(scheduleUpdateTimer);
+    
+    // 3초(3000ms) 동안 추가 변경이 없으면 갱신 실행
+    scheduleUpdateTimer = setTimeout(() => {
+        updateAnnouncementBoard().catch(console.error);
+    }, 3000); 
+}
+
 const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
-client.on('threadCreate', async (t) => { if (watchChannels.includes(t.parentId)) await updateAnnouncementBoard(); });
-client.on('threadUpdate', async (b, a) => { if (watchChannels.includes(a.parentId)) await updateAnnouncementBoard(); });
-client.on('threadDelete', async (t) => { if (watchChannels.includes(t.parentId)) await updateAnnouncementBoard(); });
+client.on('threadCreate', async (t) => { if (watchChannels.includes(t.parentId)) requestScheduleUpdate(); });
+client.on('threadUpdate', async (b, a) => { if (watchChannels.includes(a.parentId)) requestScheduleUpdate(); });
+client.on('threadDelete', async (t) => { if (watchChannels.includes(t.parentId)) requestScheduleUpdate(); });
 
 
 // ================= [ 명령어 처리 : 수동 강제 재생성용 ] =================
@@ -363,10 +389,24 @@ client.on('messageCreate', async (message) => {
 });
 
 
-// ================= [ 상호작용 처리 : 관전방 생성 & 관전 종료 버튼 클릭 ] =================
+// ================= [ 상호작용 처리 : 버튼 클릭 이벤트 ] =================
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
+    // [신규] 일정 수동 새로고침 버튼 처리
+    if (interaction.customId === 'btn_refresh_schedule') {
+        await interaction.deferReply({ flags: [ 'Ephemeral' ] }); 
+        try {
+            await updateAnnouncementBoard();
+            await interaction.editReply({ content: '✅ 일정 현황판이 정상적으로 갱신되었습니다!' });
+        } catch (error) {
+            console.error("수동 갱신 중 오류:", error);
+            await interaction.editReply({ content: '❌ 현황판 갱신 중 오류가 발생했습니다.' });
+        }
+        return; // 새로고침 처리 후 종료
+    }
+
+    // 관전방 생성 버튼 처리
     if (ROOM_CONFIG[interaction.customId]) {
         const config = ROOM_CONFIG[interaction.customId];
         await interaction.deferReply({ flags: [ 'Ephemeral' ] });
@@ -450,6 +490,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
+    // 관전 종료 버튼 처리
     if (interaction.customId === 'btn_close_spectate') {
         const currentChannel = interaction.channel;
         const guild = interaction.guild;
