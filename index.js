@@ -335,6 +335,8 @@ async function updateAnnouncementBoard() {
         await sendSection("🚀  기타 일정", otherScheduleList, 0x0099FF, "등록된 기타 일정이 없습니다.");
         await textChannel.send("\u200B");
         await sendSection("🔎  기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
+        await textChannel.send("\u200B");
+
 
 // ---------- [수동 새로고침 버튼 추가] ----------
         const refreshRow = new ActionRowBuilder().addComponents(
