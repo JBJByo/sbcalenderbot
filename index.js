@@ -336,7 +336,7 @@ async function updateAnnouncementBoard() {
         await textChannel.send("\u200B");
         await sendSection("🔎  기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
 
-        // ---------- [수동 새로고침 버튼 추가] ----------
+// ---------- [수동 새로고침 버튼 추가] ----------
         const refreshRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('btn_refresh_schedule')
@@ -344,8 +344,13 @@ async function updateAnnouncementBoard() {
                 .setStyle(ButtonStyle.Secondary)
         );
 
+        // 일반 텍스트 대신 임베드 박스로 디자인을 맞춤
+        const refreshEmbed = new EmbedBuilder()
+            .setColor(0x95A5A6) // 다른 카테고리와 구분되는 차분한 회색 계열
+            .setDescription("💡 **수동 새로고침**\n동시 변경으로 인해 일정이 꼬이거나 누락된 경우 아래 버튼을 눌러주세요.");
+
         await textChannel.send({ 
-            content: "💡 일정이 꼬이거나 최신화가 필요하면 아래 버튼을 눌러주세요.", 
+            embeds: [refreshEmbed],
             components: [refreshRow] 
         });
         // -----------------------------------------------
