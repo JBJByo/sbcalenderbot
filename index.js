@@ -1,5 +1,15 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
+const { 
+    Client, 
+    GatewayIntentBits, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    ChannelType, 
+    PermissionFlagsBits,
+    Partials 
+} = require('discord.js');
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
@@ -19,6 +29,8 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
     ],
+    // 💡 닫혀있거나 캐시되지 않은 스레드 이벤트도 놓치지 않도록 설정
+    partials: [Partials.Channel, Partials.ThreadMember],
 });
 
 // [기존 설정] 현황판 및 포럼 ID
@@ -49,7 +61,6 @@ client.on('ready', async (c) => {
 
 // ================= [ 가이드, 버튼, 실시간 현황판 빌더 함수 ] =================
 
-// 실시간 현황판 텍스트를 만들어주는 헬퍼 함수
 async function getSpectateStatusText(guild) {
     let text = `### 📊 실시간 관전방 개설 현황\n`;
     
@@ -82,7 +93,6 @@ async function getSpectateStatusText(guild) {
     return text;
 }
 
-// 기존 현황판 메시지를 삭제하고, 맨 아래에 완전히 새로 전송하는 함수
 async function refreshSpectateStatus(guild) {
     try {
         const targetChannel = await client.channels.fetch(BUTTON_CHANNEL_ID).catch(() => null);
@@ -161,8 +171,21 @@ async function autoDeployGuideAndButtons() {
 }
 
 
-// ================= [ 공지사항 현황판 자동 갱신 로직 ] =================
+// ================= [ 공지사항 현황판 자동 갱신 로직 (락 적용) ] =================
+let isUpdatingSchedule = false; 
+let hasPendingScheduleUpdate = false; 
+let scheduleUpdateTimer = null;
+
 async function updateAnnouncementBoard() {
+    // 이미 갱신 작업이 진행 중이라면 completed 후 1회 추가 실행되도록 예약
+    if (isUpdatingSchedule) {
+        hasPendingScheduleUpdate = true;
+        console.log("⏳ 현황판 갱신이 이미 진행 중입니다. 완료 후 대기 중인 갱신을 실행합니다.");
+        return;
+    }
+
+    isUpdatingSchedule = true;
+
     try {
         const textChannel = await client.channels.fetch(ANNOUNCEMENT_TEXT_ID).catch(() => null);
         if (!textChannel) return;
@@ -177,7 +200,6 @@ async function updateAnnouncementBoard() {
             const title = thread.name;
             if (title.includes("펑")) return;
 
-            // 💡 한국 시간(KST) 기준으로 현재 날짜 구하기
             const kstDateString = new Intl.DateTimeFormat('en-US', {
                 timeZone: 'Asia/Seoul',
                 month: 'numeric',
@@ -189,55 +211,43 @@ async function updateAnnouncementBoard() {
             let sortKey;
             let displayTitlePrefix = "";
 
-            // 1차 제목 정리: 마감/완료, 일협 등의 키워드를 임시 변수에서 정제
             let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '');
 
-            // 💡 날짜와 시간을 각각 "독립적으로" 탐색 (인식률 및 정확도 대폭 개선)
             const dateMatch = title.match(/(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/);
             const timeMatch = title.match(/(?:(오전|오후|am|pm|AM|PM)\s*)?([0-2]?\d)[:시](?!\s*간)(?:\s*([0-5]\d)분?)?/);
 
-            // 날짜가 발견된 경우
             if (dateMatch) {
                 const month = parseInt(dateMatch[1], 10);
                 const day = parseInt(dateMatch[2], 10);
 
-                // 지난 일정 필터링
                 let isPast = false;
                 if (month < curMonth && (curMonth - month) < 6) isPast = true;
                 if (month === curMonth && day < curDay) isPast = true;
                 
                 if (isPast) {
                     console.log(`📁 날짜가 지난 포스트 닫기 처리됨: ${title}`);
-                    // 포스트 닫기(보관)만 실행
-                    thread.edit({ 
-                        archived: true 
-                    }).catch(console.error);
+                    thread.edit({ archived: true }).catch(console.error);
                     return; 
                 }
 
-                // 정렬 키값 설정
                 sortKey = { month, day, isIlhyeop: false };
                 
-                // 원본에서 날짜 텍스트와 주변 껍데기 괄호 제거
                 const escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                 const dateEraser = new RegExp(`[\\s\\[\\(]*${escapeRegExp(dateMatch[0])}[\\s\\]\\)]*`, 'g');
                 cleanedTitle = cleanedTitle.replace(dateEraser, ' ');
 
-                // 시간 파싱 및 [HH:MM] 포맷 빌드
                 let timePrefix = "";
                 if (timeMatch) {
                     let hour = parseInt(timeMatch[2], 10);
                     let minute = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
                     const ampm = timeMatch[1];
 
-                    // 오전/오후 및 AM/PM 24시간제 정정 변환
                     if (ampm) {
                         const lowerAmpm = ampm.toLowerCase();
                         if ((lowerAmpm === '오후' || lowerAmpm === 'pm') && hour < 12) hour += 12;
                         if ((lowerAmpm === '오전' || lowerAmpm === 'am') && hour === 12) hour = 0;
                     }
 
-                    // 원본에서 시간 텍스트와 주변 껍데기 괄호 제거
                     const timeEraser = new RegExp(`[\\s\\[\\(]*${escapeRegExp(timeMatch[0])}[\\s\\]\\)]*`, 'g');
                     cleanedTitle = cleanedTitle.replace(timeEraser, ' ');
 
@@ -245,26 +255,22 @@ async function updateAnnouncementBoard() {
                     timePrefix = `[${pad(hour)}:${pad(minute)}] `; 
                 }
 
-                // 중간에 덩그러니 남은 요일 텍스트 지우기
                 cleanedTitle = cleanedTitle.replace(/(?:월|화|수|목|금|토|일)요일/g, ' ');
                 displayTitlePrefix = `[${month}/${day}] ｜ ${timePrefix}`;
                 
             } else {
-                // 날짜가 아예 적혀있지 않은 경우 -> 무조건 [일협] 카테고리로 분류
                 sortKey = { month: 98, day: 98, isIlhyeop: true }; 
                 displayTitlePrefix = `[일협] ｜ `;
             }
 
-            // 💡 괄호 및 찌꺼기 정제 ('오프' 키워드는 보호)
             cleanedTitle = cleanedTitle.replace(/[\[\(]\s*오프\s*[\]\)]/g, '___OFFLINE___');
             cleanedTitle = cleanedTitle.replace(/오프/g, '___OFFLINE___');
             
             cleanedTitle = cleanedTitle.replace(/[\[\(][\s/,\-~]*[\]\)]/g, ' ');
-            cleanedTitle = cleanedTitle.replace(/[\[\(\]\)]/g, ' '); // 불필요한 모든 잔여 껍데기 괄호 제거
+            cleanedTitle = cleanedTitle.replace(/[\[\(\]\)]/g, ' ');
             
             cleanedTitle = cleanedTitle.replace(/___OFFLINE___/g, '[오프]');
 
-            // 제목 앞뒤에 붙은 불필요한 특수문자(? 포함) 및 다중 공백 정리
             cleanedTitle = cleanedTitle.replace(/^[\]\)/\-,\s|?]+|[\[\(/\-,\s|?]+$/g, '');
             cleanedTitle = cleanedTitle.replace(/\s+/g, ' ').trim();
 
@@ -280,7 +286,6 @@ async function updateAnnouncementBoard() {
                 text: `${displayTitle} ([바로가기](${url}))`
             };
 
-            // 완료된 방도 마감(일정) 배열에 들어가도록 조건 처리
             if (title.includes("마감") || title.includes("꽉") || title.includes("완료")) {
                 scheduleArr.push(postData);
             } else {
@@ -288,56 +293,49 @@ async function updateAnnouncementBoard() {
             }
         };
 
-        // 스레드를 가져오고 검사하는 공통 헬퍼 함수
-const fetchAndProcessThreads = async (forumChannel, scheduleArr, recruitingArr) => {
-    if (!forumChannel) return;
+        const fetchAndProcessThreads = async (forumChannel, scheduleArr, recruitingArr) => {
+            if (!forumChannel) return;
 
-    // 1. 현재 활성화된 스레드 가져오기
-    const activeThreads = await forumChannel.threads.fetchActive();
-    for (const [_, thread] of activeThreads.threads) {
-        processThread(thread, scheduleArr, recruitingArr);
-    }
-
-    // 2. 최근 보관(닫힘)된 스레드 가져오기 (디스코드 자동 닫힘 방지)
-    const archivedThreads = await forumChannel.threads.fetchArchived({ limit: 20 });
-    
-    // 한국 시간 기준 현재 날짜 구하기
-    const kstDateString = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Asia/Seoul',
-        month: 'numeric',
-        day: 'numeric'
-    }).format(new Date());
-    const [curMonth, curDay] = kstDateString.split('/').map(Number);
-
-    for (const [_, thread] of archivedThreads.threads) {
-        const title = thread.name;
-        const dateMatch = title.match(/(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/);
-        
-        if (dateMatch) {
-            const month = parseInt(dateMatch[1], 10);
-            const day = parseInt(dateMatch[2], 10);
-            
-            // 날짜가 지나지 않았는지 확인 (미래의 일정인지)
-            let isPast = false;
-            if (month < curMonth && (curMonth - month) < 6) isPast = true;
-            if (month === curMonth && day < curDay) isPast = true;
-
-            // 아직 날짜가 안 지났는데 닫혀있다면 강제로 다시 열기!
-            if (!isPast) {
-                console.log(`✨ 강제 종료된 미래 일정 부활됨: ${title}`);
-                await thread.edit({ archived: false }).catch(console.error);
-                // 다시 열렸으므로 현황판 배열에도 추가 처리
+            const activeThreads = await forumChannel.threads.fetchActive();
+            for (const [_, thread] of activeThreads.threads) {
                 processThread(thread, scheduleArr, recruitingArr);
             }
-        }
-    }
-};
 
-const mainForum = await client.channels.fetch(MAIN_FORUM_ID).catch(() => null);
-await fetchAndProcessThreads(mainForum, murderScheduleList, murderRecruitingList);
+            const archivedThreads = await forumChannel.threads.fetchArchived({ limit: 20 });
+            
+            const kstDateString = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Asia/Seoul',
+                month: 'numeric',
+                day: 'numeric'
+            }).format(new Date());
+            const [curMonth, curDay] = kstDateString.split('/').map(Number);
 
-const otherForum = await client.channels.fetch(OTHER_FORUM_ID).catch(() => null);
-await fetchAndProcessThreads(otherForum, otherScheduleList, otherRecruitingList);
+            for (const [_, thread] of archivedThreads.threads) {
+                const title = thread.name;
+                const dateMatch = title.match(/(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/);
+                
+                if (dateMatch) {
+                    const month = parseInt(dateMatch[1], 10);
+                    const day = parseInt(dateMatch[2], 10);
+                    
+                    let isPast = false;
+                    if (month < curMonth && (curMonth - month) < 6) isPast = true;
+                    if (month === curMonth && day < curDay) isPast = true;
+
+                    if (!isPast) {
+                        console.log(`✨ 강제 종료된 미래 일정 부활됨: ${title}`);
+                        await thread.edit({ archived: false }).catch(console.error);
+                        processThread(thread, scheduleArr, recruitingArr);
+                    }
+                }
+            }
+        };
+
+        const mainForum = await client.channels.fetch(MAIN_FORUM_ID).catch(() => null);
+        await fetchAndProcessThreads(mainForum, murderScheduleList, murderRecruitingList);
+
+        const otherForum = await client.channels.fetch(OTHER_FORUM_ID).catch(() => null);
+        await fetchAndProcessThreads(otherForum, otherScheduleList, otherRecruitingList);
 
         const sortFunction = (a, b) => (a.sortKey.month !== b.sortKey.month) ? a.sortKey.month - b.sortKey.month : a.sortKey.day - b.sortKey.day;
         
@@ -384,8 +382,6 @@ await fetchAndProcessThreads(otherForum, otherScheduleList, otherRecruitingList)
         await sendSection("🔎  기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
         await textChannel.send("\u200B");
 
-
-// ---------- [수동 새로고침 버튼 추가] ----------
         const refreshRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('btn_refresh_schedule')
@@ -393,39 +389,55 @@ await fetchAndProcessThreads(otherForum, otherScheduleList, otherRecruitingList)
                 .setStyle(ButtonStyle.Secondary)
         );
 
-        // 일반 텍스트 대신 임베드 박스로 디자인을 맞춤
         const refreshEmbed = new EmbedBuilder()
-            .setColor(0x95A5A6) // 다른 카테고리와 구분되는 차분한 회색 계열
+            .setColor(0x95A5A6)
             .setDescription("💡 **수동 새로고침**\n동시 변경으로 인해 일정이 꼬이거나 누락된 경우 아래 버튼을 눌러주세요.");
 
         await textChannel.send({ 
             embeds: [refreshEmbed],
             components: [refreshRow] 
         });
-        // -----------------------------------------------
 
         console.log("✅ 요청 사항 반영 현황판 갱신 완료!");
     } catch (error) {
         console.error("오류 발생:", error);
+    } finally {
+        isUpdatingSchedule = false;
+
+        if (hasPendingScheduleUpdate) {
+            hasPendingScheduleUpdate = false;
+            setTimeout(() => {
+                updateAnnouncementBoard().catch(console.error);
+            }, 1000);
+        }
     }
 }
 
-// ================= [ 동시성 문제 해결: 디바운싱 처리 ] =================
-let scheduleUpdateTimer = null;
 
+// ================= [ 동시성 감지 및 스레드 이벤트 처리 ] =================
 function requestScheduleUpdate() {
     if (scheduleUpdateTimer) clearTimeout(scheduleUpdateTimer);
     
-    // 3초(3000ms) 동안 추가 변경이 없으면 갱신 실행
     scheduleUpdateTimer = setTimeout(() => {
         updateAnnouncementBoard().catch(console.error);
     }, 3000); 
 }
 
 const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
-client.on('threadCreate', async (t) => { if (watchChannels.includes(t.parentId)) requestScheduleUpdate(); });
-client.on('threadUpdate', async (b, a) => { if (watchChannels.includes(a.parentId)) requestScheduleUpdate(); });
-client.on('threadDelete', async (t) => { if (watchChannels.includes(t.parentId)) requestScheduleUpdate(); });
+
+function handleThreadEvent(thread, eventName) {
+    if (!thread) return;
+    const parentId = thread.parentId || thread.parent?.id;
+
+    if (watchChannels.includes(parentId)) {
+        console.log(`🔔 [포럼 이벤트 감지 - ${eventName}] 스레드명: "${thread.name}"`);
+        requestScheduleUpdate();
+    }
+}
+
+client.on('threadCreate', async (t) => handleThreadEvent(t, '생성됨'));
+client.on('threadUpdate', async (b, a) => handleThreadEvent(a, '수정/열림/닫힘'));
+client.on('threadDelete', async (t) => handleThreadEvent(t, '삭제됨'));
 
 
 // ================= [ 명령어 처리 : 수동 강제 재생성용 ] =================
@@ -447,7 +459,6 @@ client.on('messageCreate', async (message) => {
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
-    // [신규] 일정 수동 새로고침 버튼 처리
     if (interaction.customId === 'btn_refresh_schedule') {
         await interaction.deferReply({ flags: [ 'Ephemeral' ] }); 
         try {
@@ -457,10 +468,9 @@ client.on('interactionCreate', async (interaction) => {
             console.error("수동 갱신 중 오류:", error);
             await interaction.editReply({ content: '❌ 현황판 갱신 중 오류가 발생했습니다.' });
         }
-        return; // 새로고침 처리 후 종료
+        return;
     }
 
-    // 관전방 생성 버튼 처리
     if (ROOM_CONFIG[interaction.customId]) {
         const config = ROOM_CONFIG[interaction.customId];
         await interaction.deferReply({ flags: [ 'Ephemeral' ] });
@@ -544,7 +554,6 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 관전 종료 버튼 처리
     if (interaction.customId === 'btn_close_spectate') {
         const currentChannel = interaction.channel;
         const guild = interaction.guild;
