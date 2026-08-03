@@ -410,22 +410,43 @@ await fetchAndProcessThreads(otherForum, otherScheduleList, otherRecruitingList)
     }
 }
 
-// ================= [ 동시성 문제 해결: 디바운싱 처리 ] =================
+// ================= [ 동시성 및 중복 실행 방지 변수 ] =================
+let isUpdatingSchedule = false; // 현재 현황판 갱신 작업 중인지 여부
+let hasPendingScheduleUpdate = false; // 갱신 중 추가 요청이 들어왔는지 여부
 let scheduleUpdateTimer = null;
 
-function requestScheduleUpdate() {
-    if (scheduleUpdateTimer) clearTimeout(scheduleUpdateTimer);
-    
-    // 3초(3000ms) 동안 추가 변경이 없으면 갱신 실행
-    scheduleUpdateTimer = setTimeout(() => {
-        updateAnnouncementBoard().catch(console.error);
-    }, 3000); 
-}
+async function updateAnnouncementBoard() {
+    // 이미 갱신 작업이 진행 중이라면, 완료 후 1회 더 실행되도록 예약만 하고 종료
+    if (isUpdatingSchedule) {
+        hasPendingScheduleUpdate = true;
+        console.log("⏳ 현황판 갱신이 이미 진행 중입니다. 완료 후 대기 중인 갱신을 실행합니다.");
+        return;
+    }
 
-const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
-client.on('threadCreate', async (t) => { if (watchChannels.includes(t.parentId)) requestScheduleUpdate(); });
-client.on('threadUpdate', async (b, a) => { if (watchChannels.includes(a.parentId)) requestScheduleUpdate(); });
-client.on('threadDelete', async (t) => { if (watchChannels.includes(t.parentId)) requestScheduleUpdate(); });
+    isUpdatingSchedule = true;
+
+    try {
+        const textChannel = await client.channels.fetch(ANNOUNCEMENT_TEXT_ID).catch(() => null);
+        if (!textChannel) return;
+
+        // ... [기존 updateAnnouncementBoard 내부 로직 전체] ...
+
+        console.log("✅ 요청 사항 반영 현황판 갱신 완료!");
+    } catch (error) {
+        console.error("오류 발생:", error);
+    } finally {
+        // 작업 완료 후 락 해제
+        isUpdatingSchedule = false;
+
+        // 갱신 도중에 스레드 부활 등으로 추가 요청이 쌓여있었다면 1회 추가 실행
+        if (hasPendingScheduleUpdate) {
+            hasPendingScheduleUpdate = false;
+            setTimeout(() => {
+                updateAnnouncementBoard().catch(console.error);
+            }, 1000);
+        }
+    }
+}
 
 
 // ================= [ 명령어 처리 : 수동 강제 재생성용 ] =================
