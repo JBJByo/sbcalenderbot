@@ -288,17 +288,56 @@ async function updateAnnouncementBoard() {
             }
         };
 
-        const mainForum = await client.channels.fetch(MAIN_FORUM_ID).catch(() => null);
-        if (mainForum) {
-            const threads = await mainForum.threads.fetchActive();
-            for (const [_, thread] of threads.threads) processThread(thread, murderScheduleList, murderRecruitingList);
-        }
+        // 스레드를 가져오고 검사하는 공통 헬퍼 함수
+const fetchAndProcessThreads = async (forumChannel, scheduleArr, recruitingArr) => {
+    if (!forumChannel) return;
 
-        const otherForum = await client.channels.fetch(OTHER_FORUM_ID).catch(() => null);
-        if (otherForum) {
-            const threads = await otherForum.threads.fetchActive();
-            for (const [_, thread] of threads.threads) processThread(thread, otherScheduleList, otherRecruitingList);
+    // 1. 현재 활성화된 스레드 가져오기
+    const activeThreads = await forumChannel.threads.fetchActive();
+    for (const [_, thread] of activeThreads.threads) {
+        processThread(thread, scheduleArr, recruitingArr);
+    }
+
+    // 2. 최근 보관(닫힘)된 스레드 가져오기 (디스코드 자동 닫힘 방지)
+    const archivedThreads = await forumChannel.threads.fetchArchived({ limit: 20 });
+    
+    // 한국 시간 기준 현재 날짜 구하기
+    const kstDateString = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Seoul',
+        month: 'numeric',
+        day: 'numeric'
+    }).format(new Date());
+    const [curMonth, curDay] = kstDateString.split('/').map(Number);
+
+    for (const [_, thread] of archivedThreads.threads) {
+        const title = thread.name;
+        const dateMatch = title.match(/(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/);
+        
+        if (dateMatch) {
+            const month = parseInt(dateMatch[1], 10);
+            const day = parseInt(dateMatch[2], 10);
+            
+            // 날짜가 지나지 않았는지 확인 (미래의 일정인지)
+            let isPast = false;
+            if (month < curMonth && (curMonth - month) < 6) isPast = true;
+            if (month === curMonth && day < curDay) isPast = true;
+
+            // 아직 날짜가 안 지났는데 닫혀있다면 강제로 다시 열기!
+            if (!isPast) {
+                console.log(`✨ 강제 종료된 미래 일정 부활됨: ${title}`);
+                await thread.edit({ archived: false }).catch(console.error);
+                // 다시 열렸으므로 현황판 배열에도 추가 처리
+                processThread(thread, scheduleArr, recruitingArr);
+            }
         }
+    }
+};
+
+const mainForum = await client.channels.fetch(MAIN_FORUM_ID).catch(() => null);
+await fetchAndProcessThreads(mainForum, murderScheduleList, murderRecruitingList);
+
+const otherForum = await client.channels.fetch(OTHER_FORUM_ID).catch(() => null);
+await fetchAndProcessThreads(otherForum, otherScheduleList, otherRecruitingList);
 
         const sortFunction = (a, b) => (a.sortKey.month !== b.sortKey.month) ? a.sortKey.month - b.sortKey.month : a.sortKey.day - b.sortKey.day;
         
