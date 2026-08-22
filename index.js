@@ -29,7 +29,6 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
     ],
-    // 💡 닫혀있거나 캐시되지 않은 스레드 이벤트도 놓치지 않도록 설정
     partials: [Partials.Channel, Partials.ThreadMember],
 });
 
@@ -48,7 +47,7 @@ const ROOM_CONFIG = {
     'btn_create_c': { roomKey: 'C', roomName: 'C방-관전채팅', categoryId: '1443538692869329088', roleId: '1519716938949857360', displayName: 'C방 관전 신청' }
 };
 
-// 정규표현식 패턴 (완료 키워드 통합)
+// 정규표현식 패턴
 const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
 const MARAM_PATTERN = /[(\[][\s]*(?:마감|완료)[\s]*[)\]]|(?:마감|완료)/g; 
 const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
@@ -58,6 +57,36 @@ client.on('ready', async (c) => {
     await updateAnnouncementBoard().catch(console.error);
     await autoDeployGuideAndButtons().catch(console.error);
 });
+
+// ================= [ 관전방 수동 일괄 초기화 함수 ] =================
+async function resetAllSpectateRooms(guild) {
+    for (const key in ROOM_CONFIG) {
+        const config = ROOM_CONFIG[key];
+        
+        // 1. 카테고리 내의 관전 채널 탐색 후 삭제
+        const categoryChannel = guild.channels.cache.get(config.categoryId) || await guild.channels.fetch(config.categoryId).catch(() => null);
+        if (categoryChannel && categoryChannel.children) {
+            const targetChannel = categoryChannel.children.cache.find(ch => 
+                ch && 
+                ch.type === ChannelType.GuildText && 
+                ch.name.toLowerCase() === config.roomName.toLowerCase()
+            );
+            if (targetChannel) {
+                await targetChannel.delete('수동 갱신/초기화로 인한 채널 삭제').catch(console.error);
+            }
+        }
+
+        // 2. 해당 방의 관전 역할 일괄 회수
+        const role = guild.roles.cache.get(config.roleId);
+        if (role) {
+            const guildMembers = await guild.members.fetch();
+            const membersWithRole = guildMembers.filter(m => m.roles.cache.has(config.roleId));
+            for (const [_, member] of membersWithRole) {
+                await member.roles.remove(role).catch(console.error);
+            }
+        }
+    }
+}
 
 // ================= [ 가이드, 버튼, 실시간 현황판 빌더 함수 ] =================
 
@@ -89,10 +118,11 @@ async function getSpectateStatusText(guild) {
         }
     }
     
-    text += `\n*※ 버튼을 누르면 실시간으로 현황이 업데이트됩니다.*`;
+    text += `\n*※ 방이 제대로 열리지 않거나 오류가 생기면 아래 [관전방 초기화/갱신] 버튼을 눌러주세요.*`;
     return text;
 }
 
+// 실시간 현황판 메시지와 함께 최하단에 초기화 버튼 첨부
 async function refreshSpectateStatus(guild) {
     try {
         const targetChannel = await client.channels.fetch(BUTTON_CHANNEL_ID).catch(() => null);
@@ -111,8 +141,20 @@ async function refreshSpectateStatus(guild) {
         }
 
         const newText = await getSpectateStatusText(guild);
-        await targetChannel.send(newText);
-        console.log("🔥 지정 카테고리 추적 방식으로 최신 현황판 새로 전송 완료!");
+        
+        // 맨 아래에 배치할 초기화 버튼 Row
+        const resetRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('btn_reset_all_spectate')
+                .setLabel('🛠️ 관전방 초기화/갱신')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+        await targetChannel.send({
+            content: newText,
+            components: [resetRow]
+        });
+        console.log("🔥 최하단 초기화 버튼 포함 현황판 갱신 완료!");
     } catch (err) {
         console.error("현황판 재생성 중 오류 발생:", err);
     }
@@ -132,18 +174,21 @@ async function generateGuideMessage(channel) {
             ` ⚠️ 관전에 참여하시는 분만 이용해주세요.\n` +
             ` ⚠️ 버튼을 연속해서 누르지 말아 주세요.\n` +
             ` ⚠️ 스포일러 방지를 위해 게임 종료 후 반드시 [관전 종료] 버튼을 눌러주세요.\n` +
-            ` ⚠️ 위 유의사항 미준수 시, 경고가 누적될 수 있습니다.`
+            ` ⚠️ 방 상태가 이상하거나 고장난 경우 맨 아래 [관전방 초기화/갱신] 버튼을 이용해 주세요.`
         );
 
-    const row = new ActionRowBuilder().addComponents(
+    // 상단에는 A, B, C 신청 버튼만 배치
+    const applyRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('btn_create_a').setLabel(ROOM_CONFIG['btn_create_a'].displayName).setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('btn_create_b').setLabel(ROOM_CONFIG['btn_create_b'].displayName).setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId('btn_create_c').setLabel(ROOM_CONFIG['btn_create_c'].displayName).setStyle(ButtonStyle.Danger)
     );
-    await channel.send({ embeds: [guideEmbed], components: [row] });
+
+    // 1. 가이드 및 관전 신청 버튼 전송
+    await channel.send({ embeds: [guideEmbed], components: [applyRow] });
     
-    const statusText = await getSpectateStatusText(channel.guild);
-    await channel.send(statusText);
+    // 2. 맨 아래에 실시간 현황판 + 초기화 버튼 전송
+    await refreshSpectateStatus(channel.guild);
 }
 
 async function autoDeployGuideAndButtons() {
@@ -170,14 +215,12 @@ async function autoDeployGuideAndButtons() {
     }
 }
 
-
 // ================= [ 공지사항 현황판 자동 갱신 로직 (락 적용) ] =================
 let isUpdatingSchedule = false; 
 let hasPendingScheduleUpdate = false; 
 let scheduleUpdateTimer = null;
 
 async function updateAnnouncementBoard() {
-    // 이미 갱신 작업이 진행 중이라면 completed 후 1회 추가 실행되도록 예약
     if (isUpdatingSchedule) {
         hasPendingScheduleUpdate = true;
         console.log("⏳ 현황판 갱신이 이미 진행 중입니다. 완료 후 대기 중인 갱신을 실행합니다.");
@@ -413,7 +456,6 @@ async function updateAnnouncementBoard() {
     }
 }
 
-
 // ================= [ 동시성 감지 및 스레드 이벤트 처리 ] =================
 function requestScheduleUpdate() {
     if (scheduleUpdateTimer) clearTimeout(scheduleUpdateTimer);
@@ -439,7 +481,6 @@ client.on('threadCreate', async (t) => handleThreadEvent(t, '생성됨'));
 client.on('threadUpdate', async (b, a) => handleThreadEvent(a, '수정/열림/닫힘'));
 client.on('threadDelete', async (t) => handleThreadEvent(t, '삭제됨'));
 
-
 // ================= [ 명령어 처리 : 수동 강제 재생성용 ] =================
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
@@ -454,11 +495,11 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-
 // ================= [ 상호작용 처리 : 버튼 클릭 이벤트 ] =================
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
+    // 1. 일정 현황판 수동 새로고침
     if (interaction.customId === 'btn_refresh_schedule') {
         await interaction.deferReply({ flags: [ 'Ephemeral' ] }); 
         try {
@@ -471,6 +512,21 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
+    // 2. 관전방 수동 초기화 및 갱신 (고장 복구용)
+    if (interaction.customId === 'btn_reset_all_spectate') {
+        await interaction.deferReply({ flags: [ 'Ephemeral' ] });
+        try {
+            await resetAllSpectateRooms(interaction.guild);
+            await refreshSpectateStatus(interaction.guild);
+            await interaction.editReply({ content: '🛠️ 모든 관전방 채널 및 역할을 정리하고 현황판을 최신화했습니다.' });
+        } catch (error) {
+            console.error("관전방 초기화 중 오류:", error);
+            await interaction.editReply({ content: '❌ 관전방 초기화 중 오류가 발생했습니다.' });
+        }
+        return;
+    }
+
+    // 3. 관전 신청 버튼 (A/B/C)
     if (ROOM_CONFIG[interaction.customId]) {
         const config = ROOM_CONFIG[interaction.customId];
         await interaction.deferReply({ flags: [ 'Ephemeral' ] });
@@ -554,6 +610,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
+    // 4. 관전방 개별 삭제 버튼
     if (interaction.customId === 'btn_close_spectate') {
         const currentChannel = interaction.channel;
         const guild = interaction.guild;
