@@ -52,36 +52,33 @@ const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
 const MARAM_PATTERN = /[(\[][\s]*(?:마감|완료)[\s]*[)\]]|(?:마감|완료)/g; 
 const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
 
-client.on('ready', async (c) => {
+client.on('clientReady', async (c) => {
     console.log(`🤖 ${c.user.tag} 봇이 성공적으로 로그인했습니다!`);
     await updateAnnouncementBoard().catch(console.error);
     await autoDeployGuideAndButtons().catch(console.error);
 });
 
-// ================= [ 관전방 수동 일괄 초기화 함수 (고속/안전 처리) ] =================
+// ================= [ 관전방 수동 일괄 초기화 함수 (직접 채널 탐색 및 삭제) ] =================
 async function resetAllSpectateRooms(guild) {
-    // 1. 전체 채널 캐시 새로고침
-    await guild.channels.fetch();
+    const allChannels = await guild.channels.fetch();
 
     for (const key in ROOM_CONFIG) {
         const config = ROOM_CONFIG[key];
         
-        // 관전 채널 탐색 및 삭제
-        const categoryChannel = guild.channels.cache.get(config.categoryId);
-        if (categoryChannel && categoryChannel.children) {
-            const targetChannels = categoryChannel.children.cache.filter(ch => 
-                ch && 
-                ch.type === ChannelType.GuildText && 
-                ch.name.toLowerCase() === config.roomName.toLowerCase()
-            );
-            for (const [_, ch] of targetChannels) {
-                await ch.delete('수동 갱신/초기화').catch(console.error);
-            }
+        // 1. 해당 카테고리에 속한 관전 채널 직접 탐색 및 삭제
+        const targetChannels = allChannels.filter(ch => 
+            ch && 
+            ch.parentId === config.categoryId &&
+            ch.name.toLowerCase() === config.roomName.toLowerCase()
+        );
+
+        for (const [_, ch] of targetChannels) {
+            await ch.delete('수동 관전방 초기화/갱신').catch(console.error);
         }
 
-        // 해당 역할 보유자 회수 (캐시된 멤버 기준 빠른 처리)
-        const role = guild.roles.cache.get(config.roleId);
-        if (role && role.members) {
+        // 2. 역할 부여된 인원 일괄 회수
+        const role = guild.roles.cache.get(config.roleId) || await guild.roles.fetch(config.roleId).catch(() => null);
+        if (role) {
             for (const [_, member] of role.members) {
                 await member.roles.remove(role).catch(console.error);
             }
@@ -94,8 +91,8 @@ async function resetAllSpectateRooms(guild) {
 async function getSpectateStatusText(guild) {
     let text = `### 📊 실시간 관전방 개설 현황\n`;
     
-    // 서버 채널 최신 상태 조회
-    await guild.channels.fetch().catch(() => null);
+    // 채널 목록 전체 동기화
+    const allChannels = await guild.channels.fetch().catch(() => guild.channels.cache);
 
     const rooms = [
         { key: 'A', name: 'A방 관전채팅', cat: '1442440229696045130', roomName: 'A방-관전채팅' },
@@ -104,17 +101,12 @@ async function getSpectateStatusText(guild) {
     ];
 
     for (const r of rooms) {
-        const categoryChannel = guild.channels.cache.get(r.cat);
-        
-        let targetChannel = null;
-        if (categoryChannel && categoryChannel.children) {
-            targetChannel = categoryChannel.children.cache.find(ch => 
-                ch && 
-                ch.type === ChannelType.GuildText && 
-                ch.name.toLowerCase() === r.roomName.toLowerCase() &&
-                !ch.deleted
-            );
-        }
+        const targetChannel = allChannels.find(ch => 
+            ch && 
+            ch.parentId === r.cat &&
+            ch.type === ChannelType.GuildText && 
+            ch.name.toLowerCase() === r.roomName.toLowerCase()
+        );
 
         if (targetChannel) {
             text += `🟢 **${r.name}**: 개설되어 있습니다! (👉 <#${targetChannel.id}>)\n`;
@@ -489,14 +481,13 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 2. 관전방 수동 초기화 및 갱신 (고장 복구용)
+    // 2. 관전방 수동 초기화 및 갱신
     if (interaction.customId === 'btn_reset_all_spectate') {
-        // 즉시 대기 응답 전송 (3초 타임아웃 방지)
         await interaction.deferReply({ flags: [ 'Ephemeral' ] });
         try {
             await resetAllSpectateRooms(interaction.guild);
             await refreshSpectateStatus(interaction.guild);
-            await interaction.editReply({ content: '🛠️ 관전방을 모두 정리하고 현황판을 정상 복구했습니다!' });
+            await interaction.editReply({ content: '🛠️ 관전방을 모두 정리하고 현황판을 최신 상태로 복구했습니다!' });
         } catch (error) {
             console.error("관전방 초기화 중 오류:", error);
             await interaction.editReply({ content: '❌ 관전방 초기화 중 오류가 발생했습니다.' });
@@ -511,27 +502,21 @@ client.on('interactionCreate', async (interaction) => {
 
         try {
             const guild = interaction.guild;
-            await guild.channels.fetch(); // 채널 상태 즉시 동기화
-            
             const member = await guild.members.fetch(interaction.user.id);
-            const role = guild.roles.cache.get(config.roleId);
+            const role = guild.roles.cache.get(config.roleId) || await guild.roles.fetch(config.roleId).catch(() => null);
 
             if (!role) {
                 await interaction.editReply({ content: `⚠️ 설정된 역할 ID(\`${config.roleId}\`)를 서버에서 찾을 수 없습니다.` });
                 return;
             }
 
-            const categoryChannel = guild.channels.cache.get(config.categoryId);
-            
-            let targetChannel = null;
-            if (categoryChannel && categoryChannel.children) {
-                targetChannel = categoryChannel.children.cache.find(ch =>
-                    ch &&
-                    ch.type === ChannelType.GuildText &&
-                    ch.name.toLowerCase() === config.roomName.toLowerCase() &&
-                    !ch.deleted
-                );
-            }
+            const allChannels = await guild.channels.fetch();
+            let targetChannel = allChannels.find(ch =>
+                ch &&
+                ch.parentId === config.categoryId &&
+                ch.type === ChannelType.GuildText &&
+                ch.name.toLowerCase() === config.roomName.toLowerCase()
+            );
             
             let isAlreadyExist = !!targetChannel;
             
@@ -607,8 +592,8 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.reply({ content: '🔒 관전 종료 및 채널 삭제를 시작합니다!' });
 
         try {
-            const role = guild.roles.cache.get(config.roleId);
-            if (role && role.members) {
+            const role = guild.roles.cache.get(config.roleId) || await guild.roles.fetch(config.roleId).catch(() => null);
+            if (role) {
                 for (const [_, member] of role.members) {
                     await member.roles.remove(role).catch(console.error);
                 }
