@@ -38,17 +38,14 @@ const client = new Client({
 // [서버 및 채널 설정]
 const GUILD_ID = "1442440228546678796";
 
-// 분석 대상 채널 (후기 채널 1442451879186661477 제거 완료)
-const GAME_LOG_CHANNEL_ID = "1447498782840328353"; // 게임 참여/기록 채널
+// 1. 게임 동반 플레이 기록 채널
+const GAME_LOG_CHANNEL_ID = "1447498782840328353"; 
+
+// 2. 순수 일상 대화 채널
 const CHAT_CHANNEL_IDS = [
     "1442443208926953586",
     "1442449707141042318",
     "1482638402334752900"
-];
-
-const ALL_ANALYSIS_CHANNELS = [
-    GAME_LOG_CHANNEL_ID,
-    ...CHAT_CHANNEL_IDS
 ];
 
 // 현황판 및 포럼 ID
@@ -72,7 +69,7 @@ const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|�
 const activeTasks = new Map();
 let isGlobalCancelRequested = false;
 
-// ================= [ 슬래시 명령어 정의 (기본 600개) ] =================
+// ================= [ 슬래시 명령어 정의 ] =================
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('케미분석')
@@ -99,7 +96,7 @@ const slashCommands = [
         .setDescription('🛑 현재 실행 중인 분석 작업을 즉시 중단하고 대기 상태를 해제합니다')
 ].map(cmd => cmd.toJSON());
 
-// 안전한 메시지 수집 함수 (기본 600개)
+// 안전한 메시지 수집 함수
 async function fetchChannelMessages(channel, limit = 600, taskId = null) {
     if (!channel || !channel.isTextBased?.()) return [];
     let messages = [];
@@ -545,7 +542,6 @@ client.on('interactionCreate', async (interaction) => {
                 return interaction.editReply({ content: '🛑 작업이 사용자에 의해 중단되었습니다.' }).catch(() => null);
             }
 
-            // 1. 게임 동반 플레이 분석 (1447498782840328353)
             let sharedGameCount = 0;
             for (const msg of gameLogMsgs) {
                 const content = msg.content;
@@ -554,7 +550,6 @@ client.on('interactionCreate', async (interaction) => {
                 if (hasUser1 && hasUser2) sharedGameCount++;
             }
 
-            // 2. 일반 채팅 상호작용 분석
             let directInteractions = 0;
             let normalTikitaka = 0;
             let fastTikitaka = 0;
@@ -589,8 +584,7 @@ client.on('interactionCreate', async (interaction) => {
 
             activeTasks.delete(taskId);
 
-            // 가중치 종합 계산
-            const totalScoreRaw = (sharedGameCount * 14.0) + (directInteractions * 4.0) + (fastTikitaka * 2.8) + (normalTikitaka * 1.3) + (reactionScore * 0.35);
+            const totalScoreRaw = (sharedGameCount * 18.0) + (directInteractions * 4.0) + (fastTikitaka * 2.8) + (normalTikitaka * 1.3) + (reactionScore * 0.35);
             const chemiScore = totalScoreRaw > 0 ? Math.min(100, Math.floor(Math.sqrt(totalScoreRaw) * 11.0)) : 0;
 
             let tier = "🧊 어색한 탐색 단계 (낯가리는 사이)";
@@ -618,7 +612,7 @@ client.on('interactionCreate', async (interaction) => {
                     { name: '🧬 케미 지수', value: `### **${chemiScore}점** / 100점\n\`${tier}\``, inline: false },
                     { 
                         name: '🎮 게임 활동 연계 지표', 
-                        value: `• **동반 플레이 기록:** \`${sharedGameCount}회\``, 
+                        value: `• **동반 플레이 기록:** \`${sharedGameCount}회\` (케미 지수 강력 반영 🚀)`, 
                         inline: false 
                     },
                     { 
@@ -637,12 +631,15 @@ client.on('interactionCreate', async (interaction) => {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
 
-            const targetChannels = (await Promise.all(
-                ALL_ANALYSIS_CHANNELS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
-            )).filter(Boolean);
+            const [gameLogChannel, chatChannels] = await Promise.all([
+                interaction.guild.channels.fetch(GAME_LOG_CHANNEL_ID).catch(() => null),
+                Promise.all(CHAT_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null)))
+            ]);
+
+            const allChannelsToFetch = [gameLogChannel, ...chatChannels.filter(Boolean)].filter(Boolean);
 
             const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, 600, taskId))
+                allChannelsToFetch.map(ch => fetchChannelMessages(ch, 600, taskId))
             );
 
             const currentTask = activeTasks.get(taskId);
@@ -665,7 +662,7 @@ client.on('interactionCreate', async (interaction) => {
                         for (let i = 0; i < userArr.length; i++) {
                             for (let j = i + 1; j < userArr.length; j++) {
                                 const pair = [userArr[i], userArr[j]].sort().join(':');
-                                pairScores[pair] = (pairScores[pair] || 0) + 6;
+                                pairScores[pair] = (pairScores[pair] || 0) + 8;
                             }
                         }
                     }
@@ -725,7 +722,7 @@ client.on('interactionCreate', async (interaction) => {
             activeTasks.set(taskId, { interaction, isCancelled: false });
 
             const targetChannels = (await Promise.all(
-                ALL_ANALYSIS_CHANNELS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
+                CHAT_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
             )).filter(Boolean);
 
             const allResults = await Promise.all(
@@ -748,7 +745,7 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             const userActiveMinutes = {};
-            const SESSION_GAP = 5 * 60 * 1000; // 5분
+            const SESSION_GAP = 5 * 60 * 1000;
 
             for (const [userId, timestamps] of Object.entries(userTimestamps)) {
                 if (timestamps.length < 2) {
@@ -809,14 +806,14 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.editReply({ embeds: [embed] });
         }
 
-        // [D] 케미잠재력
+        // [D] 케미잠재력 (5가지 유형 완벽 분별력 알고리즘 적용)
         if (commandName === '케미잠재력') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
             const targetUser = interaction.options.getUser('user');
 
             const targetChannels = (await Promise.all(
-                ALL_ANALYSIS_CHANNELS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
+                CHAT_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
             )).filter(Boolean);
 
             const allResults = await Promise.all(
@@ -843,22 +840,55 @@ client.on('interactionCreate', async (interaction) => {
             const totalMsgs = userMsgs.length;
             const avgLen = Math.floor(userMsgs.reduce((acc, m) => acc + m.content.length, 0) / totalMsgs);
             
+            // 1. 심야 비율
             const nightMsgs = userMsgs.filter(m => {
                 const hour = new Date(m.createdTimestamp + (9 * 60 * 60 * 1000)).getUTCHours();
                 return hour >= 0 && hour < 6;
             }).length;
             const nightRatio = Math.floor((nightMsgs / totalMsgs) * 100);
 
+            // 2. 웃음 & 긍정 리액션 비율
             const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ|ㅜ|ㅠ|웃겨|웃기|재밌|잼따|개웃|꿀잼|ㅎㅎ|ㅋㅋ|푸하|대박|좋아|굳|굿)/.test(m.content)).length;
-            const rawLaughRatio = (laughMsgs / totalMsgs) * 100;
-            const laughRatio = Math.min(100, Math.floor(rawLaughRatio * 2.2));
+            const laughRatio = Math.min(100, Math.floor(((laughMsgs / totalMsgs) * 100) * 2.2));
 
-            const questionMsgs = userMsgs.filter(m => /(\?|물어|궁금)/.test(m.content)).length;
+            // 3. 질문 빈도 비율
+            const questionMsgs = userMsgs.filter(m => /(\?|물어|궁금|인가요|맞나요|어때|언제|누구|뭐임|머임)/.test(m.content)).length;
             const questionRatio = Math.floor((questionMsgs / totalMsgs) * 100);
 
+            // 4. 감정 표현 / 이모지 비율
             const emojiMsgs = userMsgs.filter(m => /([\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]|[!~^;])/g.test(m.content)).length;
             const emojiRatio = Math.floor((emojiMsgs / totalMsgs) * 100);
 
+            // ================= [ 5가지 유형 경쟁적 점수 산출 로직 ] =================
+            // 각 성향별 강도를 100점 만점 기준으로 환산하여 가장 높은 지표를 획득한 유형으로 결정
+            const scores = {
+                night: Math.min(100, Math.round(nightRatio * 3.5)),             // 심야 활동률 (28% 이상이면 100점)
+                laugh: Math.min(100, Math.round(laughRatio * 1.5)),             // 긍정 웃음 (65% 이상이면 100점)
+                story: Math.min(100, Math.round((avgLen / 30) * 100)),          // 장문 서사 (평균 30자 이상이면 100점)
+                question: Math.min(100, Math.round(questionRatio * 4.5)),       // 질문 호기심 (22% 이상이면 100점)
+                pingpong: Math.min(100, Math.round((1 - Math.min(1, avgLen / 25)) * 100 + (emojiRatio * 0.4))) // 단문 스피드 핑퐁
+            };
+
+            const topTrait = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
+
+            let potentialType = "⚡ 번개 핑퐁러";
+            let potentialDesc = "짧고 간결하게 대화 맥을 살려주며 빠른 호흡으로 핑퐁을 이어가는 쿨한 소통러입니다.";
+
+            if (topTrait === 'night' && nightRatio >= 15) {
+                potentialType = "🌙 심야의 토크마스터";
+                potentialDesc = "모두가 잠든 새벽 시간에 진가를 발휘하는 올빼미형 케미 장인입니다.";
+            } else if (topTrait === 'laugh' && laughRatio >= 35) {
+                potentialType = "💖 긍정 비타민형";
+                potentialDesc = "모든 말에 호응과 웃음을 가득 실어 대화 분위기를 밝게 띄워주는 분위기 메이커입니다.";
+            } else if (topTrait === 'story' && avgLen >= 18) {
+                potentialType = "📜 정성 스토리텔러";
+                potentialDesc = "차분하고 알찬 문장으로 대화의 맥락과 감정을 깊이 있게 전달하는 스타일입니다.";
+            } else if (topTrait === 'question' && questionRatio >= 12) {
+                potentialType = "🔍 호기심 가득 탐구자";
+                potentialDesc = "상대방에게 관심과 질문을 건네며 대화의 물꼬를 막힘없이 터주는 훌륭한 리스너입니다.";
+            }
+
+            // 최애 키워드 추출
             const wordCount = {};
             for (const msg of userMsgs) {
                 const cleanText = msg.content
@@ -884,33 +914,16 @@ client.on('interactionCreate', async (interaction) => {
                 .map(([word, cnt]) => `\`#${word}\`(${cnt}회)`)
                 .join(' ') || '`#데이터수집중`';
 
-            let potentialType = "⚡ 번개 반응러";
-            let potentialDesc = "짧고 간결하게 대화 흐름을 바로바로 이어받아 주는 든든한 핑퐁러입니다.";
-
-            if (nightRatio >= 45) {
-                potentialType = "🌙 심야의 토크마스터";
-                potentialDesc = "모두가 잠든 새벽 시간대에 진가를 발휘하는 올빼미형 케미 장인입니다.";
-            } else if (laughRatio >= 50) {
-                potentialType = "💖 긍정 비타민형";
-                potentialDesc = "모든 말에 호응과 웃음을 가득 실어 분위기를 밝게 띄워주는 분위기 메이커입니다.";
-            } else if (avgLen >= 35) {
-                potentialType = "📜 정성 가득 스토리텔러";
-                potentialDesc = "차분하고 논리정연한 장문으로 깊이 있는 대화를 이끌어내는 타입입니다.";
-            } else if (questionRatio >= 28) {
-                potentialType = "🔍 호기심 가득 탐구자";
-                potentialDesc = "질문과 관심을 통해 상대방의 말문을 술술 열어주는 훌륭한 경청자입니다.";
-            }
-
             const embed = new EmbedBuilder()
                 .setTitle(`✨ ${targetDisplayName}님의 케미 잠재력 리포트`)
                 .setColor(0x00D2D3)
-                .setDescription(`최근 활동 **${totalMsgs}개**를 기반으로 분석한 개인 소통 데이터입니다.\n\u200B`)
+                .setDescription(`최근 일상 대화 **${totalMsgs}개**를 기반으로 분석한 개인 소통 데이터입니다.\n\u200B`)
                 .addFields(
                     { name: '🏷️ 소통 잠재력 유형', value: `**${potentialType}**\n> ${potentialDesc}`, inline: false },
                     { name: '🏷️ 자주 쓰는 최애 키워드 TOP 3', value: `> ${topWords}`, inline: false },
                     { 
-                        name: '📊 세부 활동 성향 지표', 
-                        value: `• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 25 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 30 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\` (😆 긍정 에너지 가득!)\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
+                        name: '📊 세부 일상 소통 지표', 
+                        value: `• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 20 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 20 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\` (😆 긍정 에너지 가득!)\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
                         inline: false 
                     }
                 );
