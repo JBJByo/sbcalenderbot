@@ -74,18 +74,18 @@ const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|�
 const activeTasks = new Map();
 let isGlobalCancelRequested = false;
 
-// ================= [ 슬래시 명령어 정의 ] =================
+// ================= [ 슬래시 명령어 정의 (기본 500개로 변경) ] =================
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('케미분석')
         .setDescription('🧪 같이 한 게임, 후기 언급, 일상 티키타카를 종합한 1:1 케미 리포트')
         .addUserOption(opt => opt.setName('user1').setDescription('첫 번째 유저').setRequired(true))
         .addUserOption(opt => opt.setName('user2').setDescription('두 번째 유저').setRequired(true))
-        .addIntegerOption(opt => opt.setName('문장수').setDescription('채널당 분석할 메시지 수 (기본 300개)').setRequired(false)),
+        .addIntegerOption(opt => opt.setName('문장수').setDescription('채널당 분석할 메시지 수 (기본 500개)').setRequired(false)),
 
     new SlashCommandBuilder()
         .setName('케미랭킹')
-        .setDescription('🏆 최근 1주일 동안 최고의 케미를 보여준 서버 공인 찰떡 듀오 TOP 5'),
+        .setDescription('🏆 최근 1주일간 최고의 케미를 보여준 서버 공인 찰떡 듀오 TOP 5'),
 
     new SlashCommandBuilder()
         .setName('케미잠재력')
@@ -93,12 +93,12 @@ const slashCommands = [
         .addUserOption(opt => opt.setName('user').setDescription('분석할 대상 유저').setRequired(true)),
 
     new SlashCommandBuilder()
-        .setName('활동중단')
+        .setName('실행취소')
         .setDescription('🛑 현재 실행 중인 분석 작업을 즉시 중단하고 대기 상태를 해제합니다')
 ].map(cmd => cmd.toJSON());
 
-// 안전한 메시지 수집 함수
-async function fetchChannelMessages(channel, limit = 300, taskId = null) {
+// 안전한 메시지 수집 함수 (기본값 500개)
+async function fetchChannelMessages(channel, limit = 500, taskId = null) {
     if (!channel || !channel.isTextBased?.()) return [];
     let messages = [];
     let lastId = null;
@@ -494,8 +494,8 @@ client.on('interactionCreate', async (interaction) => {
         const { commandName } = interaction;
         const taskId = interaction.id;
 
-        // [0] 활동중단 (긴급 취소)
-        if (commandName === '활동중단') {
+        // [0] 실행취소 (긴급 즉각 중단)
+        if (commandName === '실행취소') {
             isGlobalCancelRequested = true;
 
             for (const [id, task] of activeTasks.entries()) {
@@ -510,14 +510,14 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: '🛑 진행 중이던 모든 분석 작업을 즉시 중단하고 대기 상태를 해제했습니다!', flags: ['Ephemeral'] });
         }
 
-        // [A] 케미분석
+        // [A] 케미분석 (기본 500개)
         if (commandName === '케미분석') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
 
             const user1 = interaction.options.getUser('user1');
             const user2 = interaction.options.getUser('user2');
-            const limit = interaction.options.getInteger('문장수') || 300;
+            const limit = interaction.options.getInteger('문장수') || 500;
 
             if (user1.id === user2.id) {
                 activeTasks.delete(taskId);
@@ -601,7 +601,7 @@ client.on('interactionCreate', async (interaction) => {
                     }
 
                     if (targetIds.has(msg.author.id)) {
-                        if (/(ㅋ|ㅎ|좋아|굿|굳|인정|대박|맞아|ㄹㅇ|오호|감사|나이스)/.test(msg.content)) {
+                        if (/(ㅋ|ㅎ|좋아|굿|굳|인정|대박|맞아|ㄹㅇ|오호|감사|나이스|재밌|웃겨)/.test(msg.content)) {
                             reactionScore++;
                         }
                     }
@@ -653,7 +653,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.editReply({ embeds: [embed] });
         }
 
-        // [B] 케미랭킹
+        // [B] 케미랭킹 (기본 500개)
         if (commandName === '케미랭킹') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
@@ -663,7 +663,7 @@ client.on('interactionCreate', async (interaction) => {
             )).filter(Boolean);
 
             const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, 300, taskId))
+                targetChannels.map(ch => fetchChannelMessages(ch, 500, taskId))
             );
 
             const currentTask = activeTasks.get(taskId);
@@ -740,7 +740,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.editReply({ embeds: [embed] });
         }
 
-        // [C] 케미잠재력
+        // [C] 케미잠재력 (기본 500개)
         if (commandName === '케미잠재력') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
@@ -751,7 +751,7 @@ client.on('interactionCreate', async (interaction) => {
             )).filter(Boolean);
 
             const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, 300, taskId))
+                targetChannels.map(ch => fetchChannelMessages(ch, 500, taskId))
             );
 
             const currentTask = activeTasks.get(taskId);
@@ -780,10 +780,10 @@ client.on('interactionCreate', async (interaction) => {
             }).length;
             const nightRatio = Math.floor((nightMsgs / totalMsgs) * 100);
 
-            // 웃음 장착도 보정 계산 (웃음 표현 다양화 및 1.6배 보정치 적용)
-            const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ|ㅜ|ㅠ|웃겨|웃기|재밌|잼따|개웃|꿀잼|ㅎㅎ|ㅋㅋ|푸하)/.test(m.content)).length;
+            // 웃음 장착도 후한 계산 (범위 대폭 확장 및 2.2배 가중치 적용)
+            const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ|ㅜ|ㅠ|웃겨|웃기|재밌|잼따|개웃|꿀잼|ㅎㅎ|ㅋㅋ|푸하|대박|좋아|굳|굿)/.test(m.content)).length;
             const rawLaughRatio = (laughMsgs / totalMsgs) * 100;
-            const laughRatio = Math.min(100, Math.floor(rawLaughRatio * 1.6));
+            const laughRatio = Math.min(100, Math.floor(rawLaughRatio * 2.2));
 
             const questionMsgs = userMsgs.filter(m => /(\?|물어|궁금)/.test(m.content)).length;
             const questionRatio = Math.floor((questionMsgs / totalMsgs) * 100);
@@ -842,7 +842,7 @@ client.on('interactionCreate', async (interaction) => {
                     { name: '🏷️ 자주 쓰는 최애 키워드 TOP 3', value: `> ${topWords}`, inline: false },
                     { 
                         name: '📊 세부 활동 성향 지표', 
-                        value: `• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 25 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 30 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\`\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
+                        value: `• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 25 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 30 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\` (😆 긍정 에너지 가득!)\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
                         inline: false 
                     }
                 );
