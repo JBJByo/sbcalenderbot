@@ -69,7 +69,7 @@ const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|�
 const activeTasks = new Map();
 let isGlobalCancelRequested = false;
 
-// ================= [ 슬래시 명령어 정의 ] =================
+// ================= [ 슬래시 명령어 정의 (접속랭킹 제외 및 4개 명령어 구성) ] =================
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('케미분석')
@@ -83,12 +83,8 @@ const slashCommands = [
         .setDescription('🏆 최근 1주일간 최고의 케미를 보여준 서버 공인 찰떡 듀오 TOP 5'),
 
     new SlashCommandBuilder()
-        .setName('접속랭킹')
-        .setDescription('⏱️ 최근 서버 채팅 활동 및 상주 체류 시간이 가장 긴 유저 TOP 5'),
-
-    new SlashCommandBuilder()
         .setName('케미잠재력')
-        .setDescription('✨ 최애 키워드, 야행성, 소통 스타일을 종합 분석하는 개인 케미 잠재력 리포트')
+        .setDescription('✨ 접속 체류 시간, 최애 키워드, 소통 스타일을 종합 분석하는 개인 케미 잠재력 리포트')
         .addUserOption(opt => opt.setName('user').setDescription('분석할 대상 유저').setRequired(true)),
 
     new SlashCommandBuilder()
@@ -716,97 +712,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.editReply({ embeds: [embed] });
         }
 
-        // [C] 접속랭킹
-        if (commandName === '접속랭킹') {
-            await interaction.deferReply();
-            activeTasks.set(taskId, { interaction, isCancelled: false });
-
-            const targetChannels = (await Promise.all(
-                CHAT_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
-            )).filter(Boolean);
-
-            const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, 600, taskId))
-            );
-
-            const currentTask = activeTasks.get(taskId);
-            if (!currentTask || currentTask.isCancelled || isGlobalCancelRequested) {
-                activeTasks.delete(taskId);
-                return interaction.editReply({ content: '🛑 작업이 사용자에 의해 중단되었습니다.' }).catch(() => null);
-            }
-
-            const userTimestamps = {};
-            for (const messages of allResults) {
-                for (const msg of messages) {
-                    if (msg.author.bot) continue;
-                    if (!userTimestamps[msg.author.id]) userTimestamps[msg.author.id] = [];
-                    userTimestamps[msg.author.id].push(msg.createdTimestamp);
-                }
-            }
-
-            const userActiveMinutes = {};
-            const SESSION_GAP = 5 * 60 * 1000;
-
-            for (const [userId, timestamps] of Object.entries(userTimestamps)) {
-                if (timestamps.length < 2) {
-                    userActiveMinutes[userId] = 1;
-                    continue;
-                }
-
-                timestamps.sort((a, b) => a - b);
-                let totalDurationMs = 0;
-                let sessionStart = timestamps[0];
-                let prevTime = timestamps[0];
-
-                for (let i = 1; i < timestamps.length; i++) {
-                    const diff = timestamps[i] - prevTime;
-                    if (diff <= SESSION_GAP) {
-                        prevTime = timestamps[i];
-                    } else {
-                        totalDurationMs += Math.max(prevTime - sessionStart, 60000);
-                        sessionStart = timestamps[i];
-                        prevTime = timestamps[i];
-                    }
-                }
-                totalDurationMs += Math.max(prevTime - sessionStart, 60000);
-                userActiveMinutes[userId] = Math.max(1, Math.round(totalDurationMs / (60 * 1000)));
-            }
-
-            activeTasks.delete(taskId);
-
-            const sortedUsers = Object.entries(userActiveMinutes).sort((a, b) => b[1] - a[1]).slice(0, 5);
-
-            if (sortedUsers.length === 0) {
-                return interaction.editReply({ content: '분석할 활동 데이터가 부족합니다.' });
-            }
-
-            const embed = new EmbedBuilder()
-                .setTitle("⏱️ 서버 실시간 접속 및 체류 랭킹 TOP 5")
-                .setColor(0x00CEC9)
-                .setDescription("📊 **최근 대화 흐름과 세션 지속 시간을 기반으로 측정한 상주 시간 순위입니다!**\n\u200B");
-
-            const rankIcons = ["🥇 1위", "🥈 2위", "🥉 3위", "4️⃣ 4위", "5️⃣ 5위"];
-
-            for (let i = 0; i < sortedUsers.length; i++) {
-                const [userId, minutes] = sortedUsers[i];
-                const u = await client.users.fetch(userId).catch(() => null);
-                const name = u?.globalName || u?.username || "유저";
-
-                const hours = Math.floor(minutes / 60);
-                const remainMins = minutes % 60;
-                const timeStr = hours > 0 ? `${hours}시간 ${remainMins}분` : `${remainMins}분`;
-
-                embed.addFields({ 
-                    name: `${rankIcons[i]} ${name}`, 
-                    value: `> 실시간 활동 체류: **${timeStr}** (\`${userTimestamps[userId]?.length || 0}개 메시지\`)`, 
-                    inline: false 
-                });
-            }
-
-            return interaction.editReply({ embeds: [embed] });
-        }
-
-        // [D] 케미잠재력 (5가지 유형 완벽 분별력 알고리즘 적용)
+        // [C] 케미잠재력 (접속 체류 시간 및 상주력 점수 내장)
         if (commandName === '케미잠재력') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
@@ -837,36 +743,63 @@ client.on('interactionCreate', async (interaction) => {
                 });
             }
 
+            // 1. 실시간 접속 체류 시간 계산 (5분 세션 기준)
+            const timestamps = userMsgs.map(m => m.createdTimestamp).sort((a, b) => a - b);
+            let totalDurationMs = 0;
+            let sessionStart = timestamps[0];
+            let prevTime = timestamps[0];
+            const SESSION_GAP = 5 * 60 * 1000;
+
+            for (let i = 1; i < timestamps.length; i++) {
+                const diff = timestamps[i] - prevTime;
+                if (diff <= SESSION_GAP) {
+                    prevTime = timestamps[i];
+                } else {
+                    totalDurationMs += Math.max(prevTime - sessionStart, 60000);
+                    sessionStart = timestamps[i];
+                    prevTime = timestamps[i];
+                }
+            }
+            totalDurationMs += Math.max(prevTime - sessionStart, 60000);
+            const activeMinutes = Math.max(1, Math.round(totalDurationMs / (60 * 1000)));
+
+            const hours = Math.floor(activeMinutes / 60);
+            const remainMins = activeMinutes % 60;
+            const stayTimeStr = hours > 0 ? `${hours}시간 ${remainMins}분` : `${remainMins}분`;
+
+            // 접속 상주력 점수 (120분 이상이면 100점 만점)
+            const presenceScore = Math.min(100, Math.floor((activeMinutes / 120) * 100));
+            let presenceTier = "🌱 라이트 상주러 (잠깐 들러 소통하는 편)";
+            if (presenceScore >= 80) presenceTier = "🏰 서버 터줏대감 (항상 서버를 지키는 핵심 멤버)";
+            else if (presenceScore >= 50) presenceTier = "☕ 단골 손님 (주기적으로 오래 머무르는 스타일)";
+            else if (presenceScore >= 25) presenceTier = "✨ 활발한 방문자 (적절한 주기로 소통 참여)";
+
+            // 2. 소통 스타일 지표 계산
             const totalMsgs = userMsgs.length;
             const avgLen = Math.floor(userMsgs.reduce((acc, m) => acc + m.content.length, 0) / totalMsgs);
             
-            // 1. 심야 비율
             const nightMsgs = userMsgs.filter(m => {
                 const hour = new Date(m.createdTimestamp + (9 * 60 * 60 * 1000)).getUTCHours();
                 return hour >= 0 && hour < 6;
             }).length;
             const nightRatio = Math.floor((nightMsgs / totalMsgs) * 100);
 
-            // 2. 웃음 & 긍정 리액션 비율
             const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ|ㅜ|ㅠ|웃겨|웃기|재밌|잼따|개웃|꿀잼|ㅎㅎ|ㅋㅋ|푸하|대박|좋아|굳|굿)/.test(m.content)).length;
             const laughRatio = Math.min(100, Math.floor(((laughMsgs / totalMsgs) * 100) * 2.2));
 
-            // 3. 질문 빈도 비율
             const questionMsgs = userMsgs.filter(m => /(\?|물어|궁금|인가요|맞나요|어때|언제|누구|뭐임|머임)/.test(m.content)).length;
             const questionRatio = Math.floor((questionMsgs / totalMsgs) * 100);
 
-            // 4. 감정 표현 / 이모지 비율
             const emojiMsgs = userMsgs.filter(m => /([\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]|[!~^;])/g.test(m.content)).length;
             const emojiRatio = Math.floor((emojiMsgs / totalMsgs) * 100);
 
-            // ================= [ 5가지 유형 경쟁적 점수 산출 로직 ] =================
-            // 각 성향별 강도를 100점 만점 기준으로 환산하여 가장 높은 지표를 획득한 유형으로 결정
+            // 3. 5가지 유형 경쟁적 점수 산출
             const scores = {
-                night: Math.min(100, Math.round(nightRatio * 3.5)),             // 심야 활동률 (28% 이상이면 100점)
-                laugh: Math.min(100, Math.round(laughRatio * 1.5)),             // 긍정 웃음 (65% 이상이면 100점)
-                story: Math.min(100, Math.round((avgLen / 30) * 100)),          // 장문 서사 (평균 30자 이상이면 100점)
-                question: Math.min(100, Math.round(questionRatio * 4.5)),       // 질문 호기심 (22% 이상이면 100점)
-                pingpong: Math.min(100, Math.round((1 - Math.min(1, avgLen / 25)) * 100 + (emojiRatio * 0.4))) // 단문 스피드 핑퐁
+                night: Math.min(100, Math.round(nightRatio * 3.5)),
+                laugh: Math.min(100, Math.round(laughRatio * 1.5)),
+                story: Math.min(100, Math.round((avgLen / 30) * 100)),
+                question: Math.min(100, Math.round(questionRatio * 4.5)),
+                pingpong: Math.min(100, Math.round((1 - Math.min(1, avgLen / 25)) * 100 + (emojiRatio * 0.4)))
             };
 
             const topTrait = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
@@ -917,13 +850,18 @@ client.on('interactionCreate', async (interaction) => {
             const embed = new EmbedBuilder()
                 .setTitle(`✨ ${targetDisplayName}님의 케미 잠재력 리포트`)
                 .setColor(0x00D2D3)
-                .setDescription(`최근 일상 대화 **${totalMsgs}개**를 기반으로 분석한 개인 소통 데이터입니다.\n\u200B`)
+                .setDescription(`최근 일상 대화 **${totalMsgs}개**를 기반으로 분석한 개인 종합 소통 데이터입니다.\n\u200B`)
                 .addFields(
                     { name: '🏷️ 소통 잠재력 유형', value: `**${potentialType}**\n> ${potentialDesc}`, inline: false },
+                    { 
+                        name: '⏱️ 서버 접속 상주력', 
+                        value: `### **${presenceScore}점** / 100점 (누적 약 \`${stayTimeStr}\` 활동)\n\`${presenceTier}\``, 
+                        inline: false 
+                    },
                     { name: '🏷️ 자주 쓰는 최애 키워드 TOP 3', value: `> ${topWords}`, inline: false },
                     { 
                         name: '📊 세부 일상 소통 지표', 
-                        value: `• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 20 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 20 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\` (😆 긍정 에너지 가득!)\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
+                        value: `• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 20 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 20 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\` (😆 긍정 에너지!)\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
                         inline: false 
                     }
                 );
