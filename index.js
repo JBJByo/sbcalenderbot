@@ -64,18 +64,18 @@ const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
 const MARAM_PATTERN = /[(\[][\s]*(?:마감|완료)[\s]*[)\]]|(?:마감|완료)/g; 
 const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
 
-// ================= [ 긴급 실행 취소 토큰 관리 ] =================
-const runningTasks = new Map(); // interactionId -> boolean (중단 플래그)
+// ================= [ 비동기 작업 및 취소 관리 ] =================
+const activeTasks = new Map(); // interactionId -> { interaction, isCancelled: boolean }
 let isGlobalCancelRequested = false;
 
-// ================= [ 슬래시 명령어 정의 ] =================
+// ================= [ 슬래시 명령어 정의 (300개 통일 & 실행취소 하단 배치) ] =================
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('케미분석')
         .setDescription('🧪 최근 대화(3~7일) 기반 두 유저의 티키타카와 애착도를 정밀 진단합니다')
         .addUserOption(opt => opt.setName('user1').setDescription('첫 번째 유저').setRequired(true))
         .addUserOption(opt => opt.setName('user2').setDescription('두 번째 유저').setRequired(true))
-        .addIntegerOption(opt => opt.setName('문장수').setDescription('채널당 분석할 메시지 수 (기본 1300개)').setRequired(false)),
+        .addIntegerOption(opt => opt.setName('문장수').setDescription('채널당 분석할 메시지 수 (기본 300개)').setRequired(false)),
 
     new SlashCommandBuilder()
         .setName('케미랭킹')
@@ -88,22 +88,21 @@ const slashCommands = [
 
     new SlashCommandBuilder()
         .setName('실행취소')
-        .setDescription('🛑 현재 진행 중인 대용량 대화 분석 작업을 즉시 중단합니다')
+        .setDescription('🛑 현재 실행 중인 분석 작업을 즉시 중단하고 대기 상태를 해제합니다')
 ].map(cmd => cmd.toJSON());
 
-// 불용어 목록 (최애 단어 집계 제외용)
 const STOP_WORDS = new Set(['진짜', '너무', '그냥', '오늘', '내일', '근데', '약간', '지금', '어제', '하고', '하면', '해서', '거의', '다들', '혹시', '계속', '있는', '없는']);
 
-// 대용량 메시지 병렬 수집 (중단 신호 처리 지원)
-async function fetchChannelMessages(channel, limit = 500, taskId = null) {
+// 메시지 수집 함수 (기본값 300개)
+async function fetchChannelMessages(channel, limit = 300, taskId = null) {
     if (!channel) return [];
     let messages = [];
     let lastId = null;
 
     try {
         while (messages.length < limit) {
-            // 실행 취소 요청 체크
-            if (isGlobalCancelRequested || (taskId && runningTasks.get(taskId) === false)) {
+            const task = taskId ? activeTasks.get(taskId) : null;
+            if (isGlobalCancelRequested || (task && task.isCancelled)) {
                 break;
             }
 
@@ -489,27 +488,17 @@ client.on('interactionCreate', async (interaction) => {
         const { commandName } = interaction;
         const taskId = interaction.id;
 
-        // [0] 실행취소 (긴급 중단)
-        if (commandName === '실행취소') {
-            isGlobalCancelRequested = true;
-            for (const key of runningTasks.keys()) {
-                runningTasks.set(key, false);
-            }
-            setTimeout(() => { isGlobalCancelRequested = false; }, 3000);
-            return interaction.reply({ content: '🛑 현재 진행 중인 모든 대용량 분석 작업을 즉시 중단했습니다!', flags: ['Ephemeral'] });
-        }
-
         // [A] 케미분석
         if (commandName === '케미분석') {
             await interaction.deferReply();
-            runningTasks.set(taskId, true);
+            activeTasks.set(taskId, { interaction, isCancelled: false });
 
             const user1 = interaction.options.getUser('user1');
             const user2 = interaction.options.getUser('user2');
-            const limit = interaction.options.getInteger('문장수') || 500;
+            const limit = interaction.options.getInteger('문장수') || 300;
 
             if (user1.id === user2.id) {
-                runningTasks.delete(taskId);
+                activeTasks.delete(taskId);
                 return interaction.followup({ content: '❌ 서로 다른 두 유저를 선택해주세요.' });
             }
 
@@ -518,18 +507,19 @@ client.on('interactionCreate', async (interaction) => {
             )).filter(Boolean);
 
             const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, 300, taskId))
+                targetChannels.map(ch => fetchChannelMessages(ch, limit, taskId))
             );
 
-            if (runningTasks.get(taskId) === false || isGlobalCancelRequested) {
-                runningTasks.delete(taskId);
-                return interaction.followup({ content: '🛑 작업이 사용자에 의해 긴급 중단되었습니다.' });
+            const currentTask = activeTasks.get(taskId);
+            if (!currentTask || currentTask.isCancelled || isGlobalCancelRequested) {
+                activeTasks.delete(taskId);
+                return interaction.editReply({ content: '🛑 작업이 사용자에 의해 중단되었습니다.' }).catch(() => null);
             }
 
             let directInteractions = 0;
             let normalTikitaka = 0;
-            let fastTikitaka = 0; // 30초 이내 폭풍 연속 대화
-            let reactionScore = 0; // 호응/웃음/긍정
+            let fastTikitaka = 0;
+            let reactionScore = 0;
             const targetIds = new Set([user1.id, user2.id]);
 
             for (const messages of allResults) {
@@ -567,7 +557,7 @@ client.on('interactionCreate', async (interaction) => {
                 }
             }
 
-            runningTasks.delete(taskId);
+            activeTasks.delete(taskId);
 
             const totalScoreRaw = (directInteractions * 4.0) + (fastTikitaka * 2.8) + (normalTikitaka * 1.5) + (reactionScore * 0.35);
             const chemiScore = totalScoreRaw > 0 ? Math.min(100, Math.floor(Math.sqrt(totalScoreRaw) * 11.2)) : 0;
@@ -612,19 +602,20 @@ client.on('interactionCreate', async (interaction) => {
         // [B] 케미랭킹
         if (commandName === '케미랭킹') {
             await interaction.deferReply();
-            runningTasks.set(taskId, true);
+            activeTasks.set(taskId, { interaction, isCancelled: false });
 
             const targetChannels = (await Promise.all(
                 TARGET_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
             )).filter(Boolean);
 
             const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, 1000, taskId))
+                targetChannels.map(ch => fetchChannelMessages(ch, 300, taskId))
             );
 
-            if (runningTasks.get(taskId) === false || isGlobalCancelRequested) {
-                runningTasks.delete(taskId);
-                return interaction.followup({ content: '🛑 작업이 중단되었습니다.' });
+            const currentTask = activeTasks.get(taskId);
+            if (!currentTask || currentTask.isCancelled || isGlobalCancelRequested) {
+                activeTasks.delete(taskId);
+                return interaction.editReply({ content: '🛑 작업이 사용자에 의해 중단되었습니다.' }).catch(() => null);
             }
 
             const pairScores = {};
@@ -651,7 +642,7 @@ client.on('interactionCreate', async (interaction) => {
                 }
             }
 
-            runningTasks.delete(taskId);
+            activeTasks.delete(taskId);
 
             const sortedPairs = Object.entries(pairScores).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
@@ -687,7 +678,7 @@ client.on('interactionCreate', async (interaction) => {
         // [C] 케미잠재력
         if (commandName === '케미잠재력') {
             await interaction.deferReply();
-            runningTasks.set(taskId, true);
+            activeTasks.set(taskId, { interaction, isCancelled: false });
             const targetUser = interaction.options.getUser('user');
 
             const targetChannels = (await Promise.all(
@@ -695,16 +686,17 @@ client.on('interactionCreate', async (interaction) => {
             )).filter(Boolean);
 
             const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, 1300, taskId))
+                targetChannels.map(ch => fetchChannelMessages(ch, 300, taskId))
             );
 
-            if (runningTasks.get(taskId) === false || isGlobalCancelRequested) {
-                runningTasks.delete(taskId);
-                return interaction.followup({ content: '🛑 작업이 중단되었습니다.' });
+            const currentTask = activeTasks.get(taskId);
+            if (!currentTask || currentTask.isCancelled || isGlobalCancelRequested) {
+                activeTasks.delete(taskId);
+                return interaction.editReply({ content: '🛑 작업이 사용자에 의해 중단되었습니다.' }).catch(() => null);
             }
 
             const userMsgs = allResults.flat().filter(m => m.author.id === targetUser.id && m.content);
-            runningTasks.delete(taskId);
+            activeTasks.delete(taskId);
 
             if (userMsgs.length < 5) {
                 return interaction.followup({ 
@@ -715,26 +707,21 @@ client.on('interactionCreate', async (interaction) => {
             const totalMsgs = userMsgs.length;
             const avgLen = Math.floor(userMsgs.reduce((acc, m) => acc + m.content.length, 0) / totalMsgs);
             
-            // 1. 심야 비율
             const nightMsgs = userMsgs.filter(m => {
                 const hour = new Date(m.createdTimestamp + (9 * 60 * 60 * 1000)).getUTCHours();
                 return hour >= 0 && hour < 6;
             }).length;
             const nightRatio = Math.floor((nightMsgs / totalMsgs) * 100);
 
-            // 2. 웃음 비율
             const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ)/.test(m.content)).length;
             const laughRatio = Math.floor((laughMsgs / totalMsgs) * 100);
 
-            // 3. 물음표/질문 비율
             const questionMsgs = userMsgs.filter(m => /(\?|물어|궁금)/.test(m.content)).length;
             const questionRatio = Math.floor((questionMsgs / totalMsgs) * 100);
 
-            // 4. 이모지 및 특수문자 비율
             const emojiMsgs = userMsgs.filter(m => /([\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]|[!~^;])/g.test(m.content)).length;
             const emojiRatio = Math.floor((emojiMsgs / totalMsgs) * 100);
 
-            // 5. 최애 단어 TOP 3 추출
             const wordCount = {};
             for (const msg of userMsgs) {
                 const words = msg.content.replace(/[^가-힣a-zA-Z0-9\s]/g, ' ').split(/\s+/);
@@ -750,7 +737,6 @@ client.on('interactionCreate', async (interaction) => {
                 .map(([word, cnt]) => `\`#${word}\`(${cnt}회)`)
                 .join(' ') || '`#데이터수집중`';
 
-            // 잠재력 유형 결정
             let potentialType = "⚡ 번개 반응러";
             let potentialDesc = "짧고 간결하게 대화 흐름을 바로바로 이어받아 주는 든든한 핑퐁러입니다.";
 
@@ -784,6 +770,22 @@ client.on('interactionCreate', async (interaction) => {
                 );
 
             return interaction.followup({ embeds: [embed] });
+        }
+
+        // [D] 실행취소 (맨 아래 배치 & 즉각 로딩 해제 처리)
+        if (commandName === '실행취소') {
+            isGlobalCancelRequested = true;
+
+            for (const [id, task] of activeTasks.entries()) {
+                task.isCancelled = true;
+                if (task.interaction && task.interaction.deferred && !task.interaction.replied) {
+                    task.interaction.editReply({ content: '🛑 관리자 또는 사용자에 의해 분석 작업이 취소되었습니다.' }).catch(() => null);
+                }
+            }
+            activeTasks.clear();
+
+            setTimeout(() => { isGlobalCancelRequested = false; }, 3000);
+            return interaction.reply({ content: '🛑 진행 중이던 모든 분석 작업을 즉시 중단하고 대기 상태를 해제했습니다!', flags: ['Ephemeral'] });
         }
     }
 
