@@ -95,7 +95,7 @@ const slashCommands = [
 const STOP_WORDS = new Set(['진짜', '너무', '그냥', '오늘', '내일', '근데', '약간', '지금', '어제', '하고', '하면', '해서', '거의', '다들', '혹시', '계속', '있는', '없는']);
 
 // 대용량 메시지 병렬 수집 (중단 신호 처리 지원)
-async function fetchChannelMessages(channel, limit = 1300, taskId = null) {
+async function fetchChannelMessages(channel, limit = 500, taskId = null) {
     if (!channel) return [];
     let messages = [];
     let lastId = null;
@@ -506,7 +506,7 @@ client.on('interactionCreate', async (interaction) => {
 
             const user1 = interaction.options.getUser('user1');
             const user2 = interaction.options.getUser('user2');
-            const limit = interaction.options.getInteger('문장수') || 1300;
+            const limit = interaction.options.getInteger('문장수') || 500;
 
             if (user1.id === user2.id) {
                 runningTasks.delete(taskId);
@@ -518,7 +518,7 @@ client.on('interactionCreate', async (interaction) => {
             )).filter(Boolean);
 
             const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, limit, taskId))
+                targetChannels.map(ch => fetchChannelMessages(ch, 300, taskId))
             );
 
             if (runningTasks.get(taskId) === false || isGlobalCancelRequested) {
