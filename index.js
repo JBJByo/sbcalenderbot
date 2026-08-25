@@ -84,7 +84,7 @@ const slashCommands = [
 
     new SlashCommandBuilder()
         .setName('케미잠재력')
-        .setDescription('✨ 최애 키워드, 상주도, 소통 스타일을 종합 분석하는 개인 케미 잠재력 리포트')
+        .setDescription('✨ 10점 만점 지표와 소통 성향으로 분석하는 개인 케미 잠재력 리포트')
         .addUserOption(opt => opt.setName('user').setDescription('분석할 대상 유저').setRequired(true)),
 
     new SlashCommandBuilder()
@@ -712,7 +712,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.editReply({ embeds: [embed] });
         }
 
-        // [C] 케미잠재력
+        // [C] 케미잠재력 (10점 만점 척도 & 5가지 균형 유형)
         if (commandName === '케미잠재력') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
@@ -743,7 +743,7 @@ client.on('interactionCreate', async (interaction) => {
                 });
             }
 
-            // 1. 접속 체류 시간 기반 단골 칭호 산출
+            // 1. 접속 체류 시간 및 상주력 계산
             const timestamps = userMsgs.map(m => m.createdTimestamp).sort((a, b) => a - b);
             let totalDurationMs = 0;
             let sessionStart = timestamps[0];
@@ -763,58 +763,67 @@ client.on('interactionCreate', async (interaction) => {
             totalDurationMs += Math.max(prevTime - sessionStart, 60000);
             const activeMinutes = Math.max(1, Math.round(totalDurationMs / (60 * 1000)));
 
-            // 단골 정도 칭호 단어화
-            let presenceTitle = "스쳐가는 바람 🍃";
-            if (activeMinutes >= 120) presenceTitle = "서버 터줏대감 🏰";
-            else if (activeMinutes >= 60) presenceTitle = "찐 단골 손님 ☕";
-            else if (activeMinutes >= 25) presenceTitle = "자주 들르는 이웃 🏃";
-            else if (activeMinutes >= 10) presenceTitle = "가벼운 마실러 🎈";
-
-            // 2. 소통 지표 계산
             const totalMsgs = userMsgs.length;
             const avgLen = Math.floor(userMsgs.reduce((acc, m) => acc + m.content.length, 0) / totalMsgs);
             
+            // 심야 비율
             const nightMsgs = userMsgs.filter(m => {
                 const hour = new Date(m.createdTimestamp + (9 * 60 * 60 * 1000)).getUTCHours();
                 return hour >= 0 && hour < 6;
             }).length;
-            const nightRatio = Math.floor((nightMsgs / totalMsgs) * 100);
+            const rawNightRatio = (nightMsgs / totalMsgs) * 100;
 
+            // 웃음 비율
             const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ|ㅜ|ㅠ|웃겨|웃기|재밌|잼따|개웃|꿀잼|ㅎㅎ|ㅋㅋ|푸하|대박|좋아|굳|굿)/.test(m.content)).length;
-            const laughRatio = Math.min(100, Math.floor(((laughMsgs / totalMsgs) * 100) * 2.2));
+            const rawLaughRatio = (laughMsgs / totalMsgs) * 100;
 
+            // 질문 빈도 비율
             const questionMsgs = userMsgs.filter(m => /(\?|물어|궁금|인가요|맞나요|어때|언제|누구|뭐임|머임)/.test(m.content)).length;
-            const questionRatio = Math.floor((questionMsgs / totalMsgs) * 100);
+            const rawQuestionRatio = (questionMsgs / totalMsgs) * 100;
 
+            // 감정/이모지 표현 비율
             const emojiMsgs = userMsgs.filter(m => /([\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]|[!~^;])/g.test(m.content)).length;
-            const emojiRatio = Math.floor((emojiMsgs / totalMsgs) * 100);
+            const rawEmojiRatio = (emojiMsgs / totalMsgs) * 100;
 
-            // 3. 5가지 유형 경쟁적 점수 산출
-            const scores = {
-                night: Math.min(100, Math.round(nightRatio * 3.5)),
-                laugh: Math.min(100, Math.round(laughRatio * 1.5)),
-                story: Math.min(100, Math.round((avgLen / 30) * 100)),
-                question: Math.min(100, Math.round(questionRatio * 4.5)),
-                pingpong: Math.min(100, Math.round((1 - Math.min(1, avgLen / 25)) * 100 + (emojiRatio * 0.4)))
+            // ================= [ 10점 만점 척도 변환 헬퍼 ] =================
+            const getGradeText = (score) => {
+                if (score >= 7.5) return '【상 🟢】';
+                if (score >= 4.0) return '【중 🟡】';
+                return '【하 ⚪】';
             };
 
-            const topTrait = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
+            const nightScore = Math.min(10, +(rawNightRatio / 3.0).toFixed(1));          // 심야 30%면 10점
+            const laughScore = Math.min(10, +((rawLaughRatio * 1.8) / 10).toFixed(1));    // 웃음 55%면 10점
+            const questionScore = Math.min(10, +(rawQuestionRatio / 2.5).toFixed(1));     // 질문 25%면 10점
+            const emojiScore = Math.min(10, +(rawEmojiRatio / 5.0).toFixed(1));          // 감정표현 50%면 10점
+            const presenceScore = Math.min(10, +(activeMinutes / 10.0).toFixed(1));       // 100분 상주 시 10점
 
-            let potentialType = "⚡ 번개 핑퐁러";
-            let potentialDesc = "짧고 간결하게 대화 맥을 살려주며 빠른 호흡으로 핑퐁을 이어가는 쿨한 소통러입니다.";
+            // ================= [ 5가지 균형 유형 결정 알고리즘 ] =================
+            const typeScores = {
+                stay: presenceScore * 1.1,         // 서버 터줏대감형
+                laugh: laughScore * 1.0,           // 긍정 비타민형
+                night: nightScore * 1.1,           // 심야의 토크마스터
+                story: Math.min(10, (avgLen / 2.5)) * 1.0, // 정성 스토리텔러 (평균 25자 기준)
+                question: questionScore * 0.9      // 호기심 탐구자 (과다 방지용 가중치 0.9)
+            };
 
-            if (topTrait === 'night' && nightRatio >= 15) {
-                potentialType = "🌙 심야의 토크마스터";
-                potentialDesc = "모두가 잠든 새벽 시간에 진가를 발휘하는 올빼미형 케미 장인입니다.";
-            } else if (topTrait === 'laugh' && laughRatio >= 35) {
+            const topType = Object.entries(typeScores).sort((a, b) => b[1] - a[1])[0][0];
+
+            let potentialType = "🏰 서버 터줏대감형";
+            let potentialDesc = "서버에 오랜 시간 상주하며 꾸준히 자리를 지켜주는 든든한 커뮤니티의 기둥입니다.";
+
+            if (topType === 'laugh') {
                 potentialType = "💖 긍정 비타민형";
-                potentialDesc = "모든 말에 호응과 웃음을 가득 실어 대화 분위기를 밝게 띄워주는 분위기 메이커입니다.";
-            } else if (topTrait === 'story' && avgLen >= 18) {
+                potentialDesc = "모든 대화에 리액션과 웃음꽃을 피워 서버 분위기를 환하게 밝혀주는 활력소입니다.";
+            } else if (topType === 'night') {
+                potentialType = "🌙 심야의 토크마스터";
+                potentialDesc = "모두가 잠든 심야와 새벽 시간대에 진가를 발휘하는 올빼미형 케미 장인입니다.";
+            } else if (topType === 'story') {
                 potentialType = "📜 정성 스토리텔러";
-                potentialDesc = "차분하고 알찬 문장으로 대화의 맥락과 감정을 깊이 있게 전달하는 스타일입니다.";
-            } else if (topTrait === 'question' && questionRatio >= 12) {
+                potentialDesc = "알차고 진정성 있는 문장으로 대화의 깊이와 맥락을 풍부하게 만드는 서사형 소통러입니다.";
+            } else if (topType === 'question') {
                 potentialType = "🔍 호기심 가득 탐구자";
-                potentialDesc = "상대방에게 관심과 질문을 건네며 대화의 물꼬를 막힘없이 터주는 훌륭한 리스너입니다.";
+                potentialDesc = "적재적소에 질문과 관심을 던져 상대방의 말문을 막힘없이 열어주는 훌륭한 경청자입니다.";
             }
 
             // 최애 키워드 추출
@@ -846,13 +855,18 @@ client.on('interactionCreate', async (interaction) => {
             const embed = new EmbedBuilder()
                 .setTitle(`✨ ${targetDisplayName}님의 케미 잠재력 리포트`)
                 .setColor(0x00D2D3)
-                .setDescription(`최근 일상 대화 **${totalMsgs}개**를 기반으로 분석한 개인 소통 데이터입니다.\n\u200B`)
+                .setDescription(`최근 일상 대화 **${totalMsgs}개**를 기반으로 정밀 진단한 개인 소통 리포트입니다.\n\u200B`)
                 .addFields(
                     { name: '🏷️ 소통 잠재력 유형', value: `**${potentialType}**\n> ${potentialDesc}`, inline: false },
                     { name: '🏷️ 자주 쓰는 최애 키워드 TOP 3', value: `> ${topWords}`, inline: false },
                     { 
-                        name: '📊 세부 일상 소통 지표', 
-                        value: `• **서버 상주 단골도:** \`${presenceTitle}\`\n• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 20 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 20 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\` (😆 긍정 에너지!)\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
+                        name: '📊 10점 만점 일상 소통 지표', 
+                        value: `• **서버 상주 지속력:** \`${presenceScore}점\` / 10점 ${getGradeText(presenceScore)}\n` +
+                               `• **웃음 & 리액션력:** \`${laughScore}점\` / 10점 ${getGradeText(laughScore)}\n` +
+                               `• **감정/이모지 표현:** \`${emojiScore}점\` / 10점 ${getGradeText(emojiScore)}\n` +
+                               `• **심야 활동 올빼미:** \`${nightScore}점\` / 10점 ${getGradeText(nightScore)}\n` +
+                               `• **질문 호기심 지수:** \`${questionScore}점\` / 10점 ${getGradeText(questionScore)}\n` +
+                               `• **평균 문장 호흡:** \`평균 ${avgLen}자\` (${avgLen >= 20 ? '장문 서사파' : '단문 핑퐁파'})`,
                         inline: false 
                     }
                 );
