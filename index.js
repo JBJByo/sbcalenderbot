@@ -38,9 +38,8 @@ const client = new Client({
 // [서버 및 채널 설정]
 const GUILD_ID = "1442440228546678796";
 
-// 분석 대상 채널 분류
+// 분석 대상 채널 (후기 채널 1442451879186661477 제거 완료)
 const GAME_LOG_CHANNEL_ID = "1447498782840328353"; // 게임 참여/기록 채널
-const REVIEW_CHANNEL_ID = "1442451879186661477";   // 게임 후기 채널
 const CHAT_CHANNEL_IDS = [
     "1442443208926953586",
     "1442449707141042318",
@@ -49,7 +48,6 @@ const CHAT_CHANNEL_IDS = [
 
 const ALL_ANALYSIS_CHANNELS = [
     GAME_LOG_CHANNEL_ID,
-    REVIEW_CHANNEL_ID,
     ...CHAT_CHANNEL_IDS
 ];
 
@@ -74,18 +72,22 @@ const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|�
 const activeTasks = new Map();
 let isGlobalCancelRequested = false;
 
-// ================= [ 슬래시 명령어 정의 (기본 500개로 변경) ] =================
+// ================= [ 슬래시 명령어 정의 (기본 600개) ] =================
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('케미분석')
-        .setDescription('🧪 같이 한 게임, 후기 언급, 일상 티키타카를 종합한 1:1 케미 리포트')
+        .setDescription('🧪 같이 한 게임 기록과 일상 티키타카를 종합한 1:1 케미 리포트')
         .addUserOption(opt => opt.setName('user1').setDescription('첫 번째 유저').setRequired(true))
         .addUserOption(opt => opt.setName('user2').setDescription('두 번째 유저').setRequired(true))
-        .addIntegerOption(opt => opt.setName('문장수').setDescription('채널당 분석할 메시지 수 (기본 500개)').setRequired(false)),
+        .addIntegerOption(opt => opt.setName('문장수').setDescription('채널당 분석할 메시지 수 (기본 600개)').setRequired(false)),
 
     new SlashCommandBuilder()
         .setName('케미랭킹')
         .setDescription('🏆 최근 1주일간 최고의 케미를 보여준 서버 공인 찰떡 듀오 TOP 5'),
+
+    new SlashCommandBuilder()
+        .setName('접속랭킹')
+        .setDescription('⏱️ 최근 서버 채팅 활동 및 상주 체류 시간이 가장 긴 유저 TOP 5'),
 
     new SlashCommandBuilder()
         .setName('케미잠재력')
@@ -97,8 +99,8 @@ const slashCommands = [
         .setDescription('🛑 현재 실행 중인 분석 작업을 즉시 중단하고 대기 상태를 해제합니다')
 ].map(cmd => cmd.toJSON());
 
-// 안전한 메시지 수집 함수 (기본값 500개)
-async function fetchChannelMessages(channel, limit = 500, taskId = null) {
+// 안전한 메시지 수집 함수 (기본 600개)
+async function fetchChannelMessages(channel, limit = 600, taskId = null) {
     if (!channel || !channel.isTextBased?.()) return [];
     let messages = [];
     let lastId = null;
@@ -494,7 +496,7 @@ client.on('interactionCreate', async (interaction) => {
         const { commandName } = interaction;
         const taskId = interaction.id;
 
-        // [0] 실행취소 (긴급 즉각 중단)
+        // [0] 실행취소
         if (commandName === '실행취소') {
             isGlobalCancelRequested = true;
 
@@ -510,14 +512,14 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: '🛑 진행 중이던 모든 분석 작업을 즉시 중단하고 대기 상태를 해제했습니다!', flags: ['Ephemeral'] });
         }
 
-        // [A] 케미분석 (기본 500개)
+        // [A] 케미분석
         if (commandName === '케미분석') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
 
             const user1 = interaction.options.getUser('user1');
             const user2 = interaction.options.getUser('user2');
-            const limit = interaction.options.getInteger('문장수') || 500;
+            const limit = interaction.options.getInteger('문장수') || 600;
 
             if (user1.id === user2.id) {
                 activeTasks.delete(taskId);
@@ -527,15 +529,13 @@ client.on('interactionCreate', async (interaction) => {
             const name1 = user1.globalName || user1.username;
             const name2 = user2.globalName || user2.username;
 
-            const [gameLogChannel, reviewChannel, chatChannels] = await Promise.all([
+            const [gameLogChannel, chatChannels] = await Promise.all([
                 interaction.guild.channels.fetch(GAME_LOG_CHANNEL_ID).catch(() => null),
-                interaction.guild.channels.fetch(REVIEW_CHANNEL_ID).catch(() => null),
                 Promise.all(CHAT_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null)))
             ]);
 
-            const [gameLogMsgs, reviewMsgs, chatMsgsList] = await Promise.all([
+            const [gameLogMsgs, chatMsgsList] = await Promise.all([
                 fetchChannelMessages(gameLogChannel, limit, taskId),
-                fetchChannelMessages(reviewChannel, limit, taskId),
                 Promise.all(chatChannels.filter(Boolean).map(ch => fetchChannelMessages(ch, limit, taskId)))
             ]);
 
@@ -551,26 +551,10 @@ client.on('interactionCreate', async (interaction) => {
                 const content = msg.content;
                 const hasUser1 = msg.mentions.users.has(user1.id) || content.includes(name1) || content.includes(user1.username);
                 const hasUser2 = msg.mentions.users.has(user2.id) || content.includes(name2) || content.includes(user2.username);
-                if (hasUser1 && hasUser2) {
-                    sharedGameCount++;
-                }
+                if (hasUser1 && hasUser2) sharedGameCount++;
             }
 
-            // 2. 게임 후기 상호 언급 분석 (1442451879186661477)
-            let reviewMentionCount = 0;
-            for (const msg of reviewMsgs) {
-                if (msg.author.id === user1.id) {
-                    if (msg.mentions.users.has(user2.id) || msg.content.includes(name2) || msg.content.includes(user2.username)) {
-                        reviewMentionCount++;
-                    }
-                } else if (msg.author.id === user2.id) {
-                    if (msg.mentions.users.has(user1.id) || msg.content.includes(name1) || msg.content.includes(user1.username)) {
-                        reviewMentionCount++;
-                    }
-                }
-            }
-
-            // 3. 일반 채팅 상호작용 분석
+            // 2. 일반 채팅 상호작용 분석
             let directInteractions = 0;
             let normalTikitaka = 0;
             let fastTikitaka = 0;
@@ -583,13 +567,9 @@ client.on('interactionCreate', async (interaction) => {
 
                 for (const msg of sortedMsgs) {
                     if (msg.author.id === user1.id) {
-                        if (msg.mentions.users.has(user2.id) || (msg.reference && msg.referencedMessage?.author?.id === user2.id)) {
-                            directInteractions++;
-                        }
+                        if (msg.mentions.users.has(user2.id) || (msg.reference && msg.referencedMessage?.author?.id === user2.id)) directInteractions++;
                     } else if (msg.author.id === user2.id) {
-                        if (msg.mentions.users.has(user1.id) || (msg.reference && msg.referencedMessage?.author?.id === user1.id)) {
-                            directInteractions++;
-                        }
+                        if (msg.mentions.users.has(user1.id) || (msg.reference && msg.referencedMessage?.author?.id === user1.id)) directInteractions++;
                     }
 
                     if (prevMsg && targetIds.has(prevMsg.author.id) && targetIds.has(msg.author.id)) {
@@ -601,9 +581,7 @@ client.on('interactionCreate', async (interaction) => {
                     }
 
                     if (targetIds.has(msg.author.id)) {
-                        if (/(ㅋ|ㅎ|좋아|굿|굳|인정|대박|맞아|ㄹㅇ|오호|감사|나이스|재밌|웃겨)/.test(msg.content)) {
-                            reactionScore++;
-                        }
+                        if (/(ㅋ|ㅎ|좋아|굿|굳|인정|대박|맞아|ㄹㅇ|오호|감사|나이스|재밌|웃겨)/.test(msg.content)) reactionScore++;
                     }
                     prevMsg = msg;
                 }
@@ -611,18 +589,19 @@ client.on('interactionCreate', async (interaction) => {
 
             activeTasks.delete(taskId);
 
-            const totalScoreRaw = (sharedGameCount * 12.0) + (reviewMentionCount * 6.5) + (directInteractions * 3.5) + (fastTikitaka * 2.5) + (normalTikitaka * 1.2) + (reactionScore * 0.3);
-            const chemiScore = totalScoreRaw > 0 ? Math.min(100, Math.floor(Math.sqrt(totalScoreRaw) * 10.8)) : 0;
+            // 가중치 종합 계산
+            const totalScoreRaw = (sharedGameCount * 14.0) + (directInteractions * 4.0) + (fastTikitaka * 2.8) + (normalTikitaka * 1.3) + (reactionScore * 0.35);
+            const chemiScore = totalScoreRaw > 0 ? Math.min(100, Math.floor(Math.sqrt(totalScoreRaw) * 11.0)) : 0;
 
             let tier = "🧊 어색한 탐색 단계 (낯가리는 사이)";
             let summary = "아직 함께한 게임이나 교류가 적은 편입니다. 같이 구인에 참가해보세요!";
 
             if (chemiScore >= 88) {
                 tier = "💖 영혼의 단짝 (서버 공인 고정 파티)";
-                summary = "게임도 같이 많이 달리고 후기와 대화 티키타카까지 완벽한 환상의 듀오입니다!";
+                summary = "게임도 같이 많이 달리고 대화 티키타카까지 완벽한 환상의 듀오입니다!";
             } else if (chemiScore >= 68) {
                 tier = "🔥 든든한 게임 메이트 (믿고 보는 조합)";
-                summary = "플레이 기록과 후기 언급이 활발하며 대화 호응이 아주 뛰어납니다.";
+                summary = "플레이 기록이 풍부하며 대화 호응과 핑퐁이 아주 뛰어납니다.";
             } else if (chemiScore >= 42) {
                 tier = "✨ 편안한 지인 (스몰토크 최적화)";
                 summary = "가벼운 일상과 안부를 나누기 편안하고 원만한 사이입니다.";
@@ -634,17 +613,17 @@ client.on('interactionCreate', async (interaction) => {
             const embed = new EmbedBuilder()
                 .setTitle(`🧪 ${name1} X ${name2} 케미 분석표`)
                 .setColor(0xFF6E96)
-                .setDescription("📅 **분석 범위:** `게임 참가 기록 + 후기 언급 + 일상 티키타카 종합 분석`\n\u200B")
+                .setDescription("📅 **분석 범위:** `게임 동반 플레이 기록 + 일상 대화 티키타카 종합 분석`\n\u200B")
                 .addFields(
                     { name: '🧬 케미 지수', value: `### **${chemiScore}점** / 100점\n\`${tier}\``, inline: false },
                     { 
-                        name: '🎮 게임 & 활동 연계 지표', 
-                        value: `• **동반 플레이 기록:** \`${sharedGameCount}회\`\n• **후기 속 상호 언급:** \`${reviewMentionCount}회\``, 
+                        name: '🎮 게임 활동 연계 지표', 
+                        value: `• **동반 플레이 기록:** \`${sharedGameCount}회\``, 
                         inline: false 
                     },
                     { 
                         name: '💬 실시간 대화 상호작용', 
-                        value: `• **직접 멘션/답장:** \`${directInteractions}회\`\n• **초고속 티키타카:** \`${fastTikitaka}회\`\n• **호응 & 리액션:** \`${reactionScore}회\``, 
+                        value: `• **직접 멘션/답장:** \`${directInteractions}회\`\n• **초고속 티키타카(30초 내):** \`${fastTikitaka}회\`\n• **호응 & 리액션:** \`${reactionScore}회\``, 
                         inline: false 
                     },
                     { name: '📌 케미 진단 총평', value: `> ${summary}`, inline: false }
@@ -653,7 +632,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.editReply({ embeds: [embed] });
         }
 
-        // [B] 케미랭킹 (기본 500개)
+        // [B] 케미랭킹
         if (commandName === '케미랭킹') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
@@ -663,7 +642,7 @@ client.on('interactionCreate', async (interaction) => {
             )).filter(Boolean);
 
             const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, 500, taskId))
+                targetChannels.map(ch => fetchChannelMessages(ch, 600, taskId))
             );
 
             const currentTask = activeTasks.get(taskId);
@@ -686,7 +665,7 @@ client.on('interactionCreate', async (interaction) => {
                         for (let i = 0; i < userArr.length; i++) {
                             for (let j = i + 1; j < userArr.length; j++) {
                                 const pair = [userArr[i], userArr[j]].sort().join(':');
-                                pairScores[pair] = (pairScores[pair] || 0) + 5;
+                                pairScores[pair] = (pairScores[pair] || 0) + 6;
                             }
                         }
                     }
@@ -717,7 +696,7 @@ client.on('interactionCreate', async (interaction) => {
             const embed = new EmbedBuilder()
                 .setTitle("🏆 최근 1주일간 최고의 케미! 실시간 찰떡 듀오 TOP 5")
                 .setColor(0xFFD700)
-                .setDescription("🔥 **최근 1주일 동안 최고의 케미를 보여준 서버 공인 찰떡 듀오 순위입니다!**\n`게임 참여 기록 + 후기 언급 + 일상 핑퐁 화력 종합 집계`\n\u200B");
+                .setDescription("🔥 **최근 1주일 동안 최고의 케미를 보여준 서버 공인 찰떡 듀오 순위입니다!**\n`게임 참여 기록 + 일상 핑퐁 화력 종합 집계`\n\u200B");
 
             const rankIcons = ["🥇 1위", "🥈 2위", "🥉 3위", "4️⃣ 4위", "5️⃣ 5위"];
 
@@ -740,7 +719,97 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.editReply({ embeds: [embed] });
         }
 
-        // [C] 케미잠재력 (기본 500개)
+        // [C] 접속랭킹
+        if (commandName === '접속랭킹') {
+            await interaction.deferReply();
+            activeTasks.set(taskId, { interaction, isCancelled: false });
+
+            const targetChannels = (await Promise.all(
+                ALL_ANALYSIS_CHANNELS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
+            )).filter(Boolean);
+
+            const allResults = await Promise.all(
+                targetChannels.map(ch => fetchChannelMessages(ch, 600, taskId))
+            );
+
+            const currentTask = activeTasks.get(taskId);
+            if (!currentTask || currentTask.isCancelled || isGlobalCancelRequested) {
+                activeTasks.delete(taskId);
+                return interaction.editReply({ content: '🛑 작업이 사용자에 의해 중단되었습니다.' }).catch(() => null);
+            }
+
+            const userTimestamps = {};
+            for (const messages of allResults) {
+                for (const msg of messages) {
+                    if (msg.author.bot) continue;
+                    if (!userTimestamps[msg.author.id]) userTimestamps[msg.author.id] = [];
+                    userTimestamps[msg.author.id].push(msg.createdTimestamp);
+                }
+            }
+
+            const userActiveMinutes = {};
+            const SESSION_GAP = 5 * 60 * 1000; // 5분
+
+            for (const [userId, timestamps] of Object.entries(userTimestamps)) {
+                if (timestamps.length < 2) {
+                    userActiveMinutes[userId] = 1;
+                    continue;
+                }
+
+                timestamps.sort((a, b) => a - b);
+                let totalDurationMs = 0;
+                let sessionStart = timestamps[0];
+                let prevTime = timestamps[0];
+
+                for (let i = 1; i < timestamps.length; i++) {
+                    const diff = timestamps[i] - prevTime;
+                    if (diff <= SESSION_GAP) {
+                        prevTime = timestamps[i];
+                    } else {
+                        totalDurationMs += Math.max(prevTime - sessionStart, 60000);
+                        sessionStart = timestamps[i];
+                        prevTime = timestamps[i];
+                    }
+                }
+                totalDurationMs += Math.max(prevTime - sessionStart, 60000);
+                userActiveMinutes[userId] = Math.max(1, Math.round(totalDurationMs / (60 * 1000)));
+            }
+
+            activeTasks.delete(taskId);
+
+            const sortedUsers = Object.entries(userActiveMinutes).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+            if (sortedUsers.length === 0) {
+                return interaction.editReply({ content: '분석할 활동 데이터가 부족합니다.' });
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle("⏱️ 서버 실시간 접속 및 체류 랭킹 TOP 5")
+                .setColor(0x00CEC9)
+                .setDescription("📊 **최근 대화 흐름과 세션 지속 시간을 기반으로 측정한 상주 시간 순위입니다!**\n\u200B");
+
+            const rankIcons = ["🥇 1위", "🥈 2위", "🥉 3위", "4️⃣ 4위", "5️⃣ 5위"];
+
+            for (let i = 0; i < sortedUsers.length; i++) {
+                const [userId, minutes] = sortedUsers[i];
+                const u = await client.users.fetch(userId).catch(() => null);
+                const name = u?.globalName || u?.username || "유저";
+
+                const hours = Math.floor(minutes / 60);
+                const remainMins = minutes % 60;
+                const timeStr = hours > 0 ? `${hours}시간 ${remainMins}분` : `${remainMins}분`;
+
+                embed.addFields({ 
+                    name: `${rankIcons[i]} ${name}`, 
+                    value: `> 실시간 활동 체류: **${timeStr}** (\`${userTimestamps[userId]?.length || 0}개 메시지\`)`, 
+                    inline: false 
+                });
+            }
+
+            return interaction.editReply({ embeds: [embed] });
+        }
+
+        // [D] 케미잠재력
         if (commandName === '케미잠재력') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
@@ -751,7 +820,7 @@ client.on('interactionCreate', async (interaction) => {
             )).filter(Boolean);
 
             const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, 500, taskId))
+                targetChannels.map(ch => fetchChannelMessages(ch, 600, taskId))
             );
 
             const currentTask = activeTasks.get(taskId);
@@ -780,7 +849,6 @@ client.on('interactionCreate', async (interaction) => {
             }).length;
             const nightRatio = Math.floor((nightMsgs / totalMsgs) * 100);
 
-            // 웃음 장착도 후한 계산 (범위 대폭 확장 및 2.2배 가중치 적용)
             const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ|ㅜ|ㅠ|웃겨|웃기|재밌|잼따|개웃|꿀잼|ㅎㅎ|ㅋㅋ|푸하|대박|좋아|굳|굿)/.test(m.content)).length;
             const rawLaughRatio = (laughMsgs / totalMsgs) * 100;
             const laughRatio = Math.min(100, Math.floor(rawLaughRatio * 2.2));
