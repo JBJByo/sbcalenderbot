@@ -85,7 +85,7 @@ const slashCommands = [
 
     new SlashCommandBuilder()
         .setName('케미랭킹')
-        .setDescription('🏆 게임 기록과 대화량을 통합한 실시간 서버 찰떡 듀오 TOP 5'),
+        .setDescription('🏆 최근 1주일 동안 최고의 케미를 보여준 서버 공인 찰떡 듀오 TOP 5'),
 
     new SlashCommandBuilder()
         .setName('케미잠재력')
@@ -524,7 +524,6 @@ client.on('interactionCreate', async (interaction) => {
                 return interaction.editReply({ content: '❌ 서로 다른 두 유저를 선택해주세요.' });
             }
 
-            // 글로벌 원래 닉네임/프로필명 우선 채택
             const name1 = user1.globalName || user1.username;
             const name2 = user2.globalName || user2.username;
 
@@ -716,9 +715,9 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             const embed = new EmbedBuilder()
-                .setTitle("🏆 실시간 서버 케미 랭킹 TOP 5")
+                .setTitle("🏆 최근 1주일간 최고의 케미! 실시간 찰떡 듀오 TOP 5")
                 .setColor(0xFFD700)
-                .setDescription("🔥 **게임 참여, 후기, 일상 대화 데이터를 종합한 최강 케미 듀오 순위입니다!**\n\u200B");
+                .setDescription("🔥 **최근 1주일 동안 최고의 케미를 보여준 서버 공인 찰떡 듀오 순위입니다!**\n`게임 참여 기록 + 후기 언급 + 일상 핑퐁 화력 종합 집계`\n\u200B");
 
             const rankIcons = ["🥇 1위", "🥈 2위", "🥉 3위", "4️⃣ 4위", "5️⃣ 5위"];
 
@@ -726,7 +725,6 @@ client.on('interactionCreate', async (interaction) => {
                 const [pairStr, score] = sortedPairs[i];
                 const [id1, id2] = pairStr.split(':');
                 
-                // 글로벌 프로필 원래 닉네임으로 조회
                 const u1 = await client.users.fetch(id1).catch(() => null);
                 const u2 = await client.users.fetch(id2).catch(() => null);
                 const name1 = u1?.globalName || u1?.username || "유저";
@@ -782,8 +780,10 @@ client.on('interactionCreate', async (interaction) => {
             }).length;
             const nightRatio = Math.floor((nightMsgs / totalMsgs) * 100);
 
-            const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ)/.test(m.content)).length;
-            const laughRatio = Math.floor((laughMsgs / totalMsgs) * 100);
+            // 웃음 장착도 보정 계산 (웃음 표현 다양화 및 1.6배 보정치 적용)
+            const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ|ㅜ|ㅠ|웃겨|웃기|재밌|잼따|개웃|꿀잼|ㅎㅎ|ㅋㅋ|푸하)/.test(m.content)).length;
+            const rawLaughRatio = (laughMsgs / totalMsgs) * 100;
+            const laughRatio = Math.min(100, Math.floor(rawLaughRatio * 1.6));
 
             const questionMsgs = userMsgs.filter(m => /(\?|물어|궁금)/.test(m.content)).length;
             const questionRatio = Math.floor((questionMsgs / totalMsgs) * 100);
@@ -791,22 +791,19 @@ client.on('interactionCreate', async (interaction) => {
             const emojiMsgs = userMsgs.filter(m => /([\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]|[!~^;])/g.test(m.content)).length;
             const emojiRatio = Math.floor((emojiMsgs / totalMsgs) * 100);
 
-            // 단어 파싱: 디스코드 특수 태그, 타임스탬프, 멘션, 링크, 숫자 제거
             const wordCount = {};
             for (const msg of userMsgs) {
                 const cleanText = msg.content
-                    .replace(/<t:\d+(?::[tTdDfFR])?>/g, '') // 디스코드 타임스탬프 제거
-                    .replace(/<@!?\d+>/g, '')              // 유저 멘션 태그 제거
-                    .replace(/<#\d+>/g, '')                // 채널 멘션 태그 제거
-                    .replace(/<a?:\w+:\d+>/g, '')          // 커스텀 이모지 태그 제거
-                    .replace(/https?:\/\/\S+/g, '')        // 웹 링크 제거
-                    .replace(/\b\d+([:.\-/]\d+)*\b/g, '')  // 날짜/시간/숫자 패턴 제거
-                    .replace(/[0-9]/g, '');                // 모든 개별 숫자 제거
+                    .replace(/<t:\d+(?::[tTdDfFR])?>/g, '')
+                    .replace(/<@!?\d+>/g, '')
+                    .replace(/<#\d+>/g, '')
+                    .replace(/<a?:\w+:\d+>/g, '')
+                    .replace(/https?:\/\/\S+/g, '')
+                    .replace(/\b\d+([:.\-/]\d+)*\b/g, '')
+                    .replace(/[0-9]/g, '');
 
-                // 한글, 영문 단어만 분리
                 const words = cleanText.replace(/[^가-힣a-zA-Z\s]/g, ' ').split(/\s+/);
                 for (const w of words) {
-                    // 2글자 이상 + 자음/모음 남발 제외
                     if (w.length >= 2 && !/^(ㅋ+|ㅎ+|ㅜ+|ㅠ+|ㅇ+|ㄴ+|ㄱ+|ㄷ+|ㄹ+|ㅁ+|ㅂ+|ㅅ+|ㅈ+|ㅊ+|ㅋ+|ㅌ+|ㅍ+)$/.test(w)) {
                         wordCount[w] = (wordCount[w] || 0) + 1;
                     }
@@ -825,7 +822,7 @@ client.on('interactionCreate', async (interaction) => {
             if (nightRatio >= 45) {
                 potentialType = "🌙 심야의 토크마스터";
                 potentialDesc = "모두가 잠든 새벽 시간대에 진가를 발휘하는 올빼미형 케미 장인입니다.";
-            } else if (laughRatio >= 55) {
+            } else if (laughRatio >= 50) {
                 potentialType = "💖 긍정 비타민형";
                 potentialDesc = "모든 말에 호응과 웃음을 가득 실어 분위기를 밝게 띄워주는 분위기 메이커입니다.";
             } else if (avgLen >= 35) {
