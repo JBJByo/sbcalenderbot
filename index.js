@@ -38,13 +38,19 @@ const client = new Client({
 // [서버 및 채널 설정]
 const GUILD_ID = "1442440228546678796";
 
-// 케미 분석 대상 5개 채널 ID
-const TARGET_CHANNEL_IDS = [
-    "1442449707141042318",
+// 분석 대상 채널 분류
+const GAME_LOG_CHANNEL_ID = "1447498782840328353"; // 게임 참여/기록 채널
+const REVIEW_CHANNEL_ID = "1442451879186661477";   // 게임 후기 채널
+const CHAT_CHANNEL_IDS = [
     "1442443208926953586",
-    "1442445187918661477",
-    "1447498782840328353",
+    "1442449707141042318",
     "1482638402334752900"
+];
+
+const ALL_ANALYSIS_CHANNELS = [
+    GAME_LOG_CHANNEL_ID,
+    REVIEW_CHANNEL_ID,
+    ...CHAT_CHANNEL_IDS
 ];
 
 // 현황판 및 포럼 ID
@@ -65,21 +71,21 @@ const MARAM_PATTERN = /[(\[][\s]*(?:마감|완료)[\s]*[)\]]|(?:마감|완료)/g
 const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
 
 // ================= [ 비동기 작업 및 취소 관리 ] =================
-const activeTasks = new Map(); // interactionId -> { interaction, isCancelled: boolean }
+const activeTasks = new Map();
 let isGlobalCancelRequested = false;
 
-// ================= [ 슬래시 명령어 정의 (300개 통일 & 실행취소 하단 배치) ] =================
+// ================= [ 슬래시 명령어 정의 ] =================
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('케미분석')
-        .setDescription('🧪 최근 대화(3~7일) 기반 두 유저의 티키타카와 애착도를 정밀 진단합니다')
+        .setDescription('🧪 같이 한 게임, 후기 언급, 일상 티키타카를 종합한 1:1 케미 리포트')
         .addUserOption(opt => opt.setName('user1').setDescription('첫 번째 유저').setRequired(true))
         .addUserOption(opt => opt.setName('user2').setDescription('두 번째 유저').setRequired(true))
         .addIntegerOption(opt => opt.setName('문장수').setDescription('채널당 분석할 메시지 수 (기본 300개)').setRequired(false)),
 
     new SlashCommandBuilder()
         .setName('케미랭킹')
-        .setDescription('🏆 현재 서버에서 가장 뜨거운 케미를 달리고 있는 실시간 찰떡 듀오 TOP 5'),
+        .setDescription('🏆 게임 기록과 대화량을 통합한 실시간 서버 찰떡 듀오 TOP 5'),
 
     new SlashCommandBuilder()
         .setName('케미잠재력')
@@ -87,38 +93,40 @@ const slashCommands = [
         .addUserOption(opt => opt.setName('user').setDescription('분석할 대상 유저').setRequired(true)),
 
     new SlashCommandBuilder()
-        .setName('실행취소')
+        .setName('활동중단')
         .setDescription('🛑 현재 실행 중인 분석 작업을 즉시 중단하고 대기 상태를 해제합니다')
 ].map(cmd => cmd.toJSON());
 
 const STOP_WORDS = new Set(['진짜', '너무', '그냥', '오늘', '내일', '근데', '약간', '지금', '어제', '하고', '하면', '해서', '거의', '다들', '혹시', '계속', '있는', '없는']);
 
-// 메시지 수집 함수 (기본값 300개)
+// 안전한 메시지 수집 함수
 async function fetchChannelMessages(channel, limit = 300, taskId = null) {
-    if (!channel) return [];
+    if (!channel || !channel.isTextBased?.()) return [];
     let messages = [];
     let lastId = null;
 
     try {
         while (messages.length < limit) {
             const task = taskId ? activeTasks.get(taskId) : null;
-            if (isGlobalCancelRequested || (task && task.isCancelled)) {
-                break;
-            }
+            if (isGlobalCancelRequested || (task && task.isCancelled)) break;
 
             const fetchLimit = Math.min(limit - messages.length, 100);
             const options = { limit: fetchLimit };
             if (lastId) options.before = lastId;
 
-            const fetched = await channel.messages.fetch(options);
-            if (fetched.size === 0) break;
+            const fetched = await Promise.race([
+                channel.messages.fetch(options),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT')), 4000))
+            ]).catch(() => null);
+
+            if (!fetched || fetched.size === 0) break;
 
             messages = messages.concat(Array.from(fetched.values()));
             lastId = fetched.last().id;
             if (fetched.size < fetchLimit) break;
         }
     } catch (e) {
-        console.error(`채널(${channel.id}) 메시지 수집 오류:`, e.message);
+        console.error(`채널(${channel.id}) 수집 오류:`, e.message);
     }
     return messages;
 }
@@ -132,7 +140,7 @@ client.on('clientReady', async (c) => {
             Routes.applicationGuildCommands(c.user.id, GUILD_ID),
             { body: slashCommands }
         );
-        console.log('⚡ 신규 슬래시 명령어 등록 완료 (/케미분석, /케미랭킹, /케미잠재력, /실행취소)');
+        console.log('⚡ 슬래시 명령어 등록 완료');
     } catch (error) {
         console.error('슬래시 명령어 등록 실패:', error);
     }
@@ -488,6 +496,22 @@ client.on('interactionCreate', async (interaction) => {
         const { commandName } = interaction;
         const taskId = interaction.id;
 
+        // [0] 활동중단 (긴급 취소)
+        if (commandName === '활동중단') {
+            isGlobalCancelRequested = true;
+
+            for (const [id, task] of activeTasks.entries()) {
+                task.isCancelled = true;
+                if (task.interaction) {
+                    task.interaction.editReply({ content: '🛑 관리자 또는 사용자에 의해 분석 작업이 취소되었습니다.' }).catch(() => null);
+                }
+            }
+            activeTasks.clear();
+
+            setTimeout(() => { isGlobalCancelRequested = false; }, 3000);
+            return interaction.reply({ content: '🛑 진행 중이던 모든 분석 작업을 즉시 중단하고 대기 상태를 해제했습니다!', flags: ['Ephemeral'] });
+        }
+
         // [A] 케미분석
         if (commandName === '케미분석') {
             await interaction.deferReply();
@@ -499,16 +523,26 @@ client.on('interactionCreate', async (interaction) => {
 
             if (user1.id === user2.id) {
                 activeTasks.delete(taskId);
-                return interaction.followup({ content: '❌ 서로 다른 두 유저를 선택해주세요.' });
+                return interaction.editReply({ content: '❌ 서로 다른 두 유저를 선택해주세요.' });
             }
 
-            const targetChannels = (await Promise.all(
-                TARGET_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
-            )).filter(Boolean);
+            const member1 = await interaction.guild.members.fetch(user1.id).catch(() => null);
+            const member2 = await interaction.guild.members.fetch(user2.id).catch(() => null);
+            const name1 = member1?.displayName || user1.username;
+            const name2 = member2?.displayName || user2.username;
 
-            const allResults = await Promise.all(
-                targetChannels.map(ch => fetchChannelMessages(ch, limit, taskId))
-            );
+            // 채널 병렬 수집
+            const [gameLogChannel, reviewChannel, chatChannels] = await Promise.all([
+                interaction.guild.channels.fetch(GAME_LOG_CHANNEL_ID).catch(() => null),
+                interaction.guild.channels.fetch(REVIEW_CHANNEL_ID).catch(() => null),
+                Promise.all(CHAT_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null)))
+            ]);
+
+            const [gameLogMsgs, reviewMsgs, chatMsgsList] = await Promise.all([
+                fetchChannelMessages(gameLogChannel, limit, taskId),
+                fetchChannelMessages(reviewChannel, limit, taskId),
+                Promise.all(chatChannels.filter(Boolean).map(ch => fetchChannelMessages(ch, limit, taskId)))
+            ]);
 
             const currentTask = activeTasks.get(taskId);
             if (!currentTask || currentTask.isCancelled || isGlobalCancelRequested) {
@@ -516,13 +550,39 @@ client.on('interactionCreate', async (interaction) => {
                 return interaction.editReply({ content: '🛑 작업이 사용자에 의해 중단되었습니다.' }).catch(() => null);
             }
 
+            // 1. 게임 동반 플레이 분석 (1447498782840328353)
+            let sharedGameCount = 0;
+            for (const msg of gameLogMsgs) {
+                const content = msg.content;
+                const hasUser1 = msg.mentions.users.has(user1.id) || content.includes(name1) || content.includes(user1.username);
+                const hasUser2 = msg.mentions.users.has(user2.id) || content.includes(name2) || content.includes(user2.username);
+                if (hasUser1 && hasUser2) {
+                    sharedGameCount++;
+                }
+            }
+
+            // 2. 게임 후기 상호 언급 분석 (1442451879186661477)
+            let reviewMentionCount = 0;
+            for (const msg of reviewMsgs) {
+                if (msg.author.id === user1.id) {
+                    if (msg.mentions.users.has(user2.id) || msg.content.includes(name2) || msg.content.includes(user2.username)) {
+                        reviewMentionCount++;
+                    }
+                } else if (msg.author.id === user2.id) {
+                    if (msg.mentions.users.has(user1.id) || msg.content.includes(name1) || msg.content.includes(user1.username)) {
+                        reviewMentionCount++;
+                    }
+                }
+            }
+
+            // 3. 일반 채팅 상호작용 분석
             let directInteractions = 0;
             let normalTikitaka = 0;
             let fastTikitaka = 0;
             let reactionScore = 0;
             const targetIds = new Set([user1.id, user2.id]);
 
-            for (const messages of allResults) {
+            for (const messages of chatMsgsList) {
                 const sortedMsgs = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
                 let prevMsg = null;
 
@@ -540,11 +600,8 @@ client.on('interactionCreate', async (interaction) => {
                     if (prevMsg && targetIds.has(prevMsg.author.id) && targetIds.has(msg.author.id)) {
                         if (prevMsg.author.id !== msg.author.id) {
                             const timeDiff = msg.createdTimestamp - prevMsg.createdTimestamp;
-                            if (timeDiff <= 30000) {
-                                fastTikitaka++;
-                            } else if (timeDiff <= 180000) {
-                                normalTikitaka++;
-                            }
+                            if (timeDiff <= 30000) fastTikitaka++;
+                            else if (timeDiff <= 180000) normalTikitaka++;
                         }
                     }
 
@@ -559,44 +616,47 @@ client.on('interactionCreate', async (interaction) => {
 
             activeTasks.delete(taskId);
 
-            const totalScoreRaw = (directInteractions * 4.0) + (fastTikitaka * 2.8) + (normalTikitaka * 1.5) + (reactionScore * 0.35);
-            const chemiScore = totalScoreRaw > 0 ? Math.min(100, Math.floor(Math.sqrt(totalScoreRaw) * 11.2)) : 0;
+            // 가중치 종합 계산
+            const totalScoreRaw = (sharedGameCount * 12.0) + (reviewMentionCount * 6.5) + (directInteractions * 3.5) + (fastTikitaka * 2.5) + (normalTikitaka * 1.2) + (reactionScore * 0.3);
+            const chemiScore = totalScoreRaw > 0 ? Math.min(100, Math.floor(Math.sqrt(totalScoreRaw) * 10.8)) : 0;
 
-            let tier = "🧊 어색한 탐색 단계 (아직 낯가리는 사이)";
-            let summary = "최근 교류가 적은 편입니다. 먼저 채널에서 가볍게 멘션을 걸어보세요!";
+            let tier = "🧊 어색한 탐색 단계 (낯가리는 사이)";
+            let summary = "아직 함께한 게임이나 교류가 적은 편입니다. 같이 구인에 참가해보세요!";
 
             if (chemiScore >= 88) {
-                tier = "💖 영혼의 단짝 (숨만 쉬어도 통하는 사이)";
-                summary = "빛의 속도로 오가는 폭풍 티키타카! 서버 공인 환상의 찰떡 듀오입니다.";
+                tier = "💖 영혼의 단짝 (서버 공인 고정 파티)";
+                summary = "게임도 같이 많이 달리고 후기와 대화 티키타카까지 완벽한 환상의 듀오입니다!";
             } else if (chemiScore >= 68) {
-                tier = "🔥 환상의 메이트 (최고의 게임/수다 파트너)";
-                summary = "대화 맥이 끊기지 않고 리액션과 맞장구가 훌륭하게 맞아떨어집니다.";
+                tier = "🔥 든든한 게임 메이트 (믿고 보는 조합)";
+                summary = "플레이 기록과 후기 언급이 활발하며 대화 호응이 아주 뛰어납니다.";
             } else if (chemiScore >= 42) {
-                tier = "✨ 편안한 지인 (스몰토크 찰떡 단계)";
-                summary = "가벼운 안부와 일상을 부담 없이 편하게 주고받는 원만한 사이입니다.";
+                tier = "✨ 편안한 지인 (스몰토크 최적화)";
+                summary = "가벼운 일상과 안부를 나누기 편안하고 원만한 사이입니다.";
             } else if (chemiScore >= 18) {
-                tier = "🌱 친해지는 중 (내적 친밀감 쌓는 중)";
-                summary = "조금씩 관심사를 맞춰가는 중입니다. 같이 게임이나 일정에 참여해보세요!";
+                tier = "🌱 친해지는 중 (친밀감 형성 단계)";
+                summary = "서로 알아가는 중입니다. 다음 머미나 보드게임 일정을 함께 잡아보세요!";
             }
 
-            const member1 = await interaction.guild.members.fetch(user1.id).catch(() => null);
-            const member2 = await interaction.guild.members.fetch(user2.id).catch(() => null);
-
             const embed = new EmbedBuilder()
-                .setTitle(`🧪 ${member1?.displayName || user1.username} X ${member2?.displayName || user2.username} 케미 분석표`)
+                .setTitle(`🧪 ${name1} X ${name2} 케미 분석표`)
                 .setColor(0xFF6E96)
-                .setDescription("📅 **분석 범위:** `최근 약 3~7일간의 대화 티키타카 집중 분석`\n\u200B")
+                .setDescription("📅 **분석 범위:** `게임 참가 기록 + 후기 언급 + 일상 티키타카 종합 분석`\n\u200B")
                 .addFields(
                     { name: '🧬 케미 지수', value: `### **${chemiScore}점** / 100점\n\`${tier}\``, inline: false },
                     { 
-                        name: '💬 실시간 상호작용 지표', 
-                        value: `• **직접 멘션 및 답장:** \`${directInteractions}회\`\n• **초고속 티키타카(30초 내):** \`${fastTikitaka}회\`\n• **일반 릴레이 대화:** \`${normalTikitaka}회\`\n• **호응 & 리액션 횟수:** \`${reactionScore}회\``, 
+                        name: '🎮 게임 & 활동 연계 지표', 
+                        value: `• **동반 플레이 기록:** \`${sharedGameCount}회\`\n• **후기 속 상호 언급:** \`${reviewMentionCount}회\``, 
+                        inline: false 
+                    },
+                    { 
+                        name: '💬 실시간 대화 상호작용', 
+                        value: `• **직접 멘션/답장:** \`${directInteractions}회\`\n• **초고속 티키타카:** \`${fastTikitaka}회\`\n• **호응 & 리액션:** \`${reactionScore}회\``, 
                         inline: false 
                     },
                     { name: '📌 케미 진단 총평', value: `> ${summary}`, inline: false }
                 );
 
-            return interaction.followup({ embeds: [embed] });
+            return interaction.editReply({ embeds: [embed] });
         }
 
         // [B] 케미랭킹
@@ -605,7 +665,7 @@ client.on('interactionCreate', async (interaction) => {
             activeTasks.set(taskId, { interaction, isCancelled: false });
 
             const targetChannels = (await Promise.all(
-                TARGET_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
+                ALL_ANALYSIS_CHANNELS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
             )).filter(Boolean);
 
             const allResults = await Promise.all(
@@ -627,6 +687,17 @@ client.on('interactionCreate', async (interaction) => {
                 for (const msg of sortedMsgs) {
                     if (msg.author.bot) continue;
 
+                    // 멘션 기반 점수 (게임 기록/후기/답장 포함)
+                    if (msg.mentions.users.size > 1) {
+                        const userArr = Array.from(msg.mentions.users.keys()).filter(id => id !== client.user.id);
+                        for (let i = 0; i < userArr.length; i++) {
+                            for (let j = i + 1; j < userArr.length; j++) {
+                                const pair = [userArr[i], userArr[j]].sort().join(':');
+                                pairScores[pair] = (pairScores[pair] || 0) + 5; // 동시 멘션 가산
+                            }
+                        }
+                    }
+
                     if (msg.reference && msg.referencedMessage?.author && !msg.referencedMessage.author.bot && msg.referencedMessage.author.id !== msg.author.id) {
                         const pair = [msg.author.id, msg.referencedMessage.author.id].sort().join(':');
                         pairScores[pair] = (pairScores[pair] || 0) + 3;
@@ -647,13 +718,13 @@ client.on('interactionCreate', async (interaction) => {
             const sortedPairs = Object.entries(pairScores).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
             if (sortedPairs.length === 0) {
-                return interaction.followup({ content: '분석할 교류 데이터가 충분하지 않습니다.' });
+                return interaction.editReply({ content: '분석할 교류 데이터가 충분하지 않습니다.' });
             }
 
             const embed = new EmbedBuilder()
                 .setTitle("🏆 실시간 서버 케미 랭킹 TOP 5")
                 .setColor(0xFFD700)
-                .setDescription("🔥 **현재 서버에서 가장 뜨거운 케미를 보여주고 있는 찰떡 듀오 순위입니다!**\n\u200B");
+                .setDescription("🔥 **게임 참여, 후기, 일상 대화 데이터를 종합한 최강 케미 듀오 순위입니다!**\n\u200B");
 
             const rankIcons = ["🥇 1위", "🥈 2위", "🥉 3위", "4️⃣ 4위", "5️⃣ 5위"];
 
@@ -672,7 +743,7 @@ client.on('interactionCreate', async (interaction) => {
                 });
             }
 
-            return interaction.followup({ embeds: [embed] });
+            return interaction.editReply({ embeds: [embed] });
         }
 
         // [C] 케미잠재력
@@ -682,7 +753,7 @@ client.on('interactionCreate', async (interaction) => {
             const targetUser = interaction.options.getUser('user');
 
             const targetChannels = (await Promise.all(
-                TARGET_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
+                ALL_ANALYSIS_CHANNELS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
             )).filter(Boolean);
 
             const allResults = await Promise.all(
@@ -699,7 +770,7 @@ client.on('interactionCreate', async (interaction) => {
             activeTasks.delete(taskId);
 
             if (userMsgs.length < 5) {
-                return interaction.followup({ 
+                return interaction.editReply({ 
                     content: `앗, ${targetUser.username}님은 최근 서버에 자주 안 오셨군요! 🥺\n대화를 조금 더 나누어 숨겨진 케미 잠재력을 깨워주세요! 분발을 기대합니다! 🔥` 
                 });
             }
@@ -758,34 +829,18 @@ client.on('interactionCreate', async (interaction) => {
             const embed = new EmbedBuilder()
                 .setTitle(`✨ ${member?.displayName || targetUser.username}님의 케미 잠재력 리포트`)
                 .setColor(0x00D2D3)
-                .setDescription(`최근 대화 **${totalMsgs}개**를 기반으로 분석한 개인 소통 데이터입니다.\n\u200B`)
+                .setDescription(`최근 활동 **${totalMsgs}개**를 기반으로 분석한 개인 소통 데이터입니다.\n\u200B`)
                 .addFields(
                     { name: '🏷️ 소통 잠재력 유형', value: `**${potentialType}**\n> ${potentialDesc}`, inline: false },
                     { name: '🏷️ 자주 쓰는 최애 키워드 TOP 3', value: `> ${topWords}`, inline: false },
                     { 
-                        name: '📊 세부 소통 성향 지표', 
+                        name: '📊 세부 활동 성향 지표', 
                         value: `• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 25 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 30 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\`\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
                         inline: false 
                     }
                 );
 
-            return interaction.followup({ embeds: [embed] });
-        }
-
-        // [D] 실행취소 (맨 아래 배치 & 즉각 로딩 해제 처리)
-        if (commandName === '실행취소') {
-            isGlobalCancelRequested = true;
-
-            for (const [id, task] of activeTasks.entries()) {
-                task.isCancelled = true;
-                if (task.interaction && task.interaction.deferred && !task.interaction.replied) {
-                    task.interaction.editReply({ content: '🛑 관리자 또는 사용자에 의해 분석 작업이 취소되었습니다.' }).catch(() => null);
-                }
-            }
-            activeTasks.clear();
-
-            setTimeout(() => { isGlobalCancelRequested = false; }, 3000);
-            return interaction.reply({ content: '🛑 진행 중이던 모든 분석 작업을 즉시 중단하고 대기 상태를 해제했습니다!', flags: ['Ephemeral'] });
+            return interaction.editReply({ embeds: [embed] });
         }
     }
 
