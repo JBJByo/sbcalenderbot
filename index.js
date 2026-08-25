@@ -89,15 +89,13 @@ const slashCommands = [
 
     new SlashCommandBuilder()
         .setName('케미잠재력')
-        .setDescription('✨ 최애 단어, 야행성, 소통 스타일을 종합 분석하는 개인 케미 잠재력 리포트')
+        .setDescription('✨ 최애 키워드, 야행성, 소통 스타일을 종합 분석하는 개인 케미 잠재력 리포트')
         .addUserOption(opt => opt.setName('user').setDescription('분석할 대상 유저').setRequired(true)),
 
     new SlashCommandBuilder()
         .setName('활동중단')
         .setDescription('🛑 현재 실행 중인 분석 작업을 즉시 중단하고 대기 상태를 해제합니다')
 ].map(cmd => cmd.toJSON());
-
-const STOP_WORDS = new Set(['진짜', '너무', '그냥', '오늘', '내일', '근데', '약간', '지금', '어제', '하고', '하면', '해서', '거의', '다들', '혹시', '계속', '있는', '없는']);
 
 // 안전한 메시지 수집 함수
 async function fetchChannelMessages(channel, limit = 300, taskId = null) {
@@ -526,12 +524,10 @@ client.on('interactionCreate', async (interaction) => {
                 return interaction.editReply({ content: '❌ 서로 다른 두 유저를 선택해주세요.' });
             }
 
-            const member1 = await interaction.guild.members.fetch(user1.id).catch(() => null);
-            const member2 = await interaction.guild.members.fetch(user2.id).catch(() => null);
-            const name1 = member1?.displayName || user1.username;
-            const name2 = member2?.displayName || user2.username;
+            // 글로벌 원래 닉네임/프로필명 우선 채택
+            const name1 = user1.globalName || user1.username;
+            const name2 = user2.globalName || user2.username;
 
-            // 채널 병렬 수집
             const [gameLogChannel, reviewChannel, chatChannels] = await Promise.all([
                 interaction.guild.channels.fetch(GAME_LOG_CHANNEL_ID).catch(() => null),
                 interaction.guild.channels.fetch(REVIEW_CHANNEL_ID).catch(() => null),
@@ -616,7 +612,6 @@ client.on('interactionCreate', async (interaction) => {
 
             activeTasks.delete(taskId);
 
-            // 가중치 종합 계산
             const totalScoreRaw = (sharedGameCount * 12.0) + (reviewMentionCount * 6.5) + (directInteractions * 3.5) + (fastTikitaka * 2.5) + (normalTikitaka * 1.2) + (reactionScore * 0.3);
             const chemiScore = totalScoreRaw > 0 ? Math.min(100, Math.floor(Math.sqrt(totalScoreRaw) * 10.8)) : 0;
 
@@ -687,13 +682,12 @@ client.on('interactionCreate', async (interaction) => {
                 for (const msg of sortedMsgs) {
                     if (msg.author.bot) continue;
 
-                    // 멘션 기반 점수 (게임 기록/후기/답장 포함)
                     if (msg.mentions.users.size > 1) {
                         const userArr = Array.from(msg.mentions.users.keys()).filter(id => id !== client.user.id);
                         for (let i = 0; i < userArr.length; i++) {
                             for (let j = i + 1; j < userArr.length; j++) {
                                 const pair = [userArr[i], userArr[j]].sort().join(':');
-                                pairScores[pair] = (pairScores[pair] || 0) + 5; // 동시 멘션 가산
+                                pairScores[pair] = (pairScores[pair] || 0) + 5;
                             }
                         }
                     }
@@ -731,10 +725,12 @@ client.on('interactionCreate', async (interaction) => {
             for (let i = 0; i < sortedPairs.length; i++) {
                 const [pairStr, score] = sortedPairs[i];
                 const [id1, id2] = pairStr.split(':');
-                const m1 = await interaction.guild.members.fetch(id1).catch(() => null);
-                const m2 = await interaction.guild.members.fetch(id2).catch(() => null);
-                const name1 = m1?.displayName || "유저";
-                const name2 = m2?.displayName || "유저";
+                
+                // 글로벌 프로필 원래 닉네임으로 조회
+                const u1 = await client.users.fetch(id1).catch(() => null);
+                const u2 = await client.users.fetch(id2).catch(() => null);
+                const name1 = u1?.globalName || u1?.username || "유저";
+                const name2 = u2?.globalName || u2?.username || "유저";
 
                 embed.addFields({ 
                     name: `${rankIcons[i]} ${name1} × ${name2}`, 
@@ -769,9 +765,11 @@ client.on('interactionCreate', async (interaction) => {
             const userMsgs = allResults.flat().filter(m => m.author.id === targetUser.id && m.content);
             activeTasks.delete(taskId);
 
+            const targetDisplayName = targetUser.globalName || targetUser.username;
+
             if (userMsgs.length < 5) {
                 return interaction.editReply({ 
-                    content: `앗, ${targetUser.username}님은 최근 서버에 자주 안 오셨군요! 🥺\n대화를 조금 더 나누어 숨겨진 케미 잠재력을 깨워주세요! 분발을 기대합니다! 🔥` 
+                    content: `앗, ${targetDisplayName}님은 최근 서버에 자주 안 오셨군요! 🥺\n대화를 조금 더 나누어 숨겨진 케미 잠재력을 깨워주세요! 분발을 기대합니다! 🔥` 
                 });
             }
 
@@ -793,15 +791,28 @@ client.on('interactionCreate', async (interaction) => {
             const emojiMsgs = userMsgs.filter(m => /([\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]|[!~^;])/g.test(m.content)).length;
             const emojiRatio = Math.floor((emojiMsgs / totalMsgs) * 100);
 
+            // 단어 파싱: 디스코드 특수 태그, 타임스탬프, 멘션, 링크, 숫자 제거
             const wordCount = {};
             for (const msg of userMsgs) {
-                const words = msg.content.replace(/[^가-힣a-zA-Z0-9\s]/g, ' ').split(/\s+/);
+                const cleanText = msg.content
+                    .replace(/<t:\d+(?::[tTdDfFR])?>/g, '') // 디스코드 타임스탬프 제거
+                    .replace(/<@!?\d+>/g, '')              // 유저 멘션 태그 제거
+                    .replace(/<#\d+>/g, '')                // 채널 멘션 태그 제거
+                    .replace(/<a?:\w+:\d+>/g, '')          // 커스텀 이모지 태그 제거
+                    .replace(/https?:\/\/\S+/g, '')        // 웹 링크 제거
+                    .replace(/\b\d+([:.\-/]\d+)*\b/g, '')  // 날짜/시간/숫자 패턴 제거
+                    .replace(/[0-9]/g, '');                // 모든 개별 숫자 제거
+
+                // 한글, 영문 단어만 분리
+                const words = cleanText.replace(/[^가-힣a-zA-Z\s]/g, ' ').split(/\s+/);
                 for (const w of words) {
-                    if (w.length >= 2 && !STOP_WORDS.has(w) && !/^(ㅋ+|ㅎ+|ㅜ+|ㅠ+)$/.test(w)) {
+                    // 2글자 이상 + 자음/모음 남발 제외
+                    if (w.length >= 2 && !/^(ㅋ+|ㅎ+|ㅜ+|ㅠ+|ㅇ+|ㄴ+|ㄱ+|ㄷ+|ㄹ+|ㅁ+|ㅂ+|ㅅ+|ㅈ+|ㅊ+|ㅋ+|ㅌ+|ㅍ+)$/.test(w)) {
                         wordCount[w] = (wordCount[w] || 0) + 1;
                     }
                 }
             }
+
             const topWords = Object.entries(wordCount)
                 .sort((a, b) => b[1] - a[1])
                 .slice(0, 3)
@@ -825,9 +836,8 @@ client.on('interactionCreate', async (interaction) => {
                 potentialDesc = "질문과 관심을 통해 상대방의 말문을 술술 열어주는 훌륭한 경청자입니다.";
             }
 
-            const member = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
             const embed = new EmbedBuilder()
-                .setTitle(`✨ ${member?.displayName || targetUser.username}님의 케미 잠재력 리포트`)
+                .setTitle(`✨ ${targetDisplayName}님의 케미 잠재력 리포트`)
                 .setColor(0x00D2D3)
                 .setDescription(`최근 활동 **${totalMsgs}개**를 기반으로 분석한 개인 소통 데이터입니다.\n\u200B`)
                 .addFields(
