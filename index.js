@@ -8,7 +8,10 @@ const {
     ButtonStyle, 
     ChannelType, 
     PermissionFlagsBits,
-    Partials 
+    Partials,
+    SlashCommandBuilder,
+    REST,
+    Routes
 } = require('discord.js');
 const http = require('http');
 
@@ -32,40 +35,119 @@ const client = new Client({
     partials: [Partials.Channel, Partials.ThreadMember],
 });
 
-// [기존 설정] 현황판 및 포럼 ID
+// [서버 및 채널 설정]
+const GUILD_ID = "1442440228546678796";
+
+// 케미 분석 대상 5개 채널 ID
+const TARGET_CHANNEL_IDS = [
+    "1442449707141042318",
+    "1442443208926953586",
+    "1442445187918661477",
+    "1447498782840328353",
+    "1482638402334752900"
+];
+
+// 현황판 및 포럼 ID
 const MAIN_FORUM_ID = "1442443517313024100";
 const OTHER_FORUM_ID = "1518830708179730563";
 const ANNOUNCEMENT_TEXT_ID = "1515045364045053952";
-
-// 💡 버튼과 가이드, 그리고 '실시간 관전방 현황'이 들어갈 채널 ID
 const BUTTON_CHANNEL_ID = "1519706442209300521"; 
 
-// 3개 버튼에 대한 통합 설정 구조
+// 3개 방 관전 설정
 const ROOM_CONFIG = {
     'btn_create_a': { roomKey: 'A', roomName: 'A방-관전채팅', categoryId: '1442440229696045130', roleId: '1519716902589563071', displayName: 'A방 관전 신청' },
     'btn_create_b': { roomKey: 'B', roomName: 'B방-관전채팅', categoryId: '1469981664531972291', roleId: '1519716927881084980', displayName: 'B방 관전 신청' },
     'btn_create_c': { roomKey: 'C', roomName: 'C방-관전채팅', categoryId: '1443538692869329088', roleId: '1519716938949857360', displayName: 'C방 관전 신청' }
 };
 
-// 정규표현식 패턴
 const DATE_PATTERN = /(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/;
 const MARAM_PATTERN = /[(\[][\s]*(?:마감|완료)[\s]*[)\]]|(?:마감|완료)/g; 
 const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|일정협의)/g; 
 
+// ================= [ 긴급 실행 취소 토큰 관리 ] =================
+const runningTasks = new Map(); // interactionId -> boolean (중단 플래그)
+let isGlobalCancelRequested = false;
+
+// ================= [ 슬래시 명령어 정의 ] =================
+const slashCommands = [
+    new SlashCommandBuilder()
+        .setName('케미분석')
+        .setDescription('🧪 최근 대화(3~7일) 기반 두 유저의 티키타카와 애착도를 정밀 진단합니다')
+        .addUserOption(opt => opt.setName('user1').setDescription('첫 번째 유저').setRequired(true))
+        .addUserOption(opt => opt.setName('user2').setDescription('두 번째 유저').setRequired(true))
+        .addIntegerOption(opt => opt.setName('문장수').setDescription('채널당 분석할 메시지 수 (기본 1300개)').setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('케미랭킹')
+        .setDescription('🏆 현재 서버에서 가장 뜨거운 케미를 달리고 있는 실시간 찰떡 듀오 TOP 5'),
+
+    new SlashCommandBuilder()
+        .setName('케미잠재력')
+        .setDescription('✨ 최애 단어, 야행성, 소통 스타일을 종합 분석하는 개인 케미 잠재력 리포트')
+        .addUserOption(opt => opt.setName('user').setDescription('분석할 대상 유저').setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('실행취소')
+        .setDescription('🛑 현재 진행 중인 대용량 대화 분석 작업을 즉시 중단합니다')
+].map(cmd => cmd.toJSON());
+
+// 불용어 목록 (최애 단어 집계 제외용)
+const STOP_WORDS = new Set(['진짜', '너무', '그냥', '오늘', '내일', '근데', '약간', '지금', '어제', '하고', '하면', '해서', '거의', '다들', '혹시', '계속', '있는', '없는']);
+
+// 대용량 메시지 병렬 수집 (중단 신호 처리 지원)
+async function fetchChannelMessages(channel, limit = 1300, taskId = null) {
+    if (!channel) return [];
+    let messages = [];
+    let lastId = null;
+
+    try {
+        while (messages.length < limit) {
+            // 실행 취소 요청 체크
+            if (isGlobalCancelRequested || (taskId && runningTasks.get(taskId) === false)) {
+                break;
+            }
+
+            const fetchLimit = Math.min(limit - messages.length, 100);
+            const options = { limit: fetchLimit };
+            if (lastId) options.before = lastId;
+
+            const fetched = await channel.messages.fetch(options);
+            if (fetched.size === 0) break;
+
+            messages = messages.concat(Array.from(fetched.values()));
+            lastId = fetched.last().id;
+            if (fetched.size < fetchLimit) break;
+        }
+    } catch (e) {
+        console.error(`채널(${channel.id}) 메시지 수집 오류:`, e.message);
+    }
+    return messages;
+}
+
 client.on('clientReady', async (c) => {
-    console.log(`🤖 ${c.user.tag} 봇이 성공적으로 로그인했습니다!`);
+    console.log(`🤖 ${c.user.tag} 봇 로그인 완료!`);
+
+    try {
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+        await rest.put(
+            Routes.applicationGuildCommands(c.user.id, GUILD_ID),
+            { body: slashCommands }
+        );
+        console.log('⚡ 신규 슬래시 명령어 등록 완료 (/케미분석, /케미랭킹, /케미잠재력, /실행취소)');
+    } catch (error) {
+        console.error('슬래시 명령어 등록 실패:', error);
+    }
+
     await updateAnnouncementBoard().catch(console.error);
     await autoDeployGuideAndButtons().catch(console.error);
 });
 
-// ================= [ 관전방 수동 일괄 초기화 함수 (직접 채널 탐색 및 삭제) ] =================
+// ================= [ 관전방 수동 일괄 초기화 ] =================
 async function resetAllSpectateRooms(guild) {
     const allChannels = await guild.channels.fetch();
 
     for (const key in ROOM_CONFIG) {
         const config = ROOM_CONFIG[key];
-        
-        // 1. 해당 카테고리에 속한 관전 채널 직접 탐색 및 삭제
         const targetChannels = allChannels.filter(ch => 
             ch && 
             ch.parentId === config.categoryId &&
@@ -76,7 +158,6 @@ async function resetAllSpectateRooms(guild) {
             await ch.delete('수동 관전방 초기화/갱신').catch(console.error);
         }
 
-        // 2. 역할 부여된 인원 일괄 회수
         const role = guild.roles.cache.get(config.roleId) || await guild.roles.fetch(config.roleId).catch(() => null);
         if (role) {
             for (const [_, member] of role.members) {
@@ -86,12 +167,9 @@ async function resetAllSpectateRooms(guild) {
     }
 }
 
-// ================= [ 가이드, 버튼, 실시간 현황판 빌더 함수 ] =================
-
+// ================= [ 가이드, 버튼, 실시간 현황판 빌더 ] =================
 async function getSpectateStatusText(guild) {
     let text = `### 📊 실시간 관전방 개설 현황\n`;
-    
-    // 채널 목록 전체 동기화
     const allChannels = await guild.channels.fetch().catch(() => guild.channels.cache);
 
     const rooms = [
@@ -119,7 +197,6 @@ async function getSpectateStatusText(guild) {
     return text;
 }
 
-// 실시간 현황판 메시지와 함께 최하단에 초기화 버튼 첨부
 async function refreshSpectateStatus(guild) {
     try {
         const targetChannel = await client.channels.fetch(BUTTON_CHANNEL_ID).catch(() => null);
@@ -133,7 +210,6 @@ async function refreshSpectateStatus(guild) {
         }
 
         const newText = await getSpectateStatusText(guild);
-        
         const resetRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('btn_reset_all_spectate')
@@ -141,10 +217,7 @@ async function refreshSpectateStatus(guild) {
                 .setStyle(ButtonStyle.Secondary)
         );
 
-        await targetChannel.send({
-            content: newText,
-            components: [resetRow]
-        });
+        await targetChannel.send({ content: newText, components: [resetRow] });
     } catch (err) {
         console.error("현황판 재생성 중 오류 발생:", err);
     }
@@ -205,7 +278,6 @@ async function updateAnnouncementBoard() {
         hasPendingScheduleUpdate = true;
         return;
     }
-
     isUpdatingSchedule = true;
 
     try {
@@ -222,20 +294,14 @@ async function updateAnnouncementBoard() {
             const title = thread.name;
             if (title.includes("펑")) return;
 
-            const kstDateString = new Intl.DateTimeFormat('en-US', {
-                timeZone: 'Asia/Seoul',
-                month: 'numeric',
-                day: 'numeric'
-            }).format(new Date());
+            const kstDateString = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric' }).format(new Date());
             const [curMonth, curDay] = kstDateString.split('/').map(Number);
-
             const url = `https://discord.com/channels/${thread.guildId}/${thread.id}`;
             let sortKey;
             let displayTitlePrefix = "";
-
             let cleanedTitle = title.replace(MARAM_PATTERN, '').replace(ILHYEOP_PATTERN, '');
 
-            const dateMatch = title.match(/(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/);
+            const dateMatch = title.match(DATE_PATTERN);
             const timeMatch = title.match(/(?:(오전|오후|am|pm|AM|PM)\s*)?([0-2]?\d)[:시](?!\s*간)(?:\s*([0-5]\d)분?)?/);
 
             if (dateMatch) {
@@ -252,10 +318,8 @@ async function updateAnnouncementBoard() {
                 }
 
                 sortKey = { month, day, isIlhyeop: false };
-                
                 const escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const dateEraser = new RegExp(`[\\s\\[\\(]*${escapeRegExp(dateMatch[0])}[\\s\\]\\)]*`, 'g');
-                cleanedTitle = cleanedTitle.replace(dateEraser, ' ');
+                cleanedTitle = cleanedTitle.replace(new RegExp(`[\\s\\[\\(]*${escapeRegExp(dateMatch[0])}[\\s\\]\\)]*`, 'g'), ' ');
 
                 let timePrefix = "";
                 if (timeMatch) {
@@ -268,42 +332,32 @@ async function updateAnnouncementBoard() {
                         if ((lowerAmpm === '오후' || lowerAmpm === 'pm') && hour < 12) hour += 12;
                         if ((lowerAmpm === '오전' || lowerAmpm === 'am') && hour === 12) hour = 0;
                     }
-
-                    const timeEraser = new RegExp(`[\\s\\[\\(]*${escapeRegExp(timeMatch[0])}[\\s\\]\\)]*`, 'g');
-                    cleanedTitle = cleanedTitle.replace(timeEraser, ' ');
-
-                    const pad = (num) => String(num).padStart(2, '0');
-                    timePrefix = `[${pad(hour)}:${pad(minute)}] `; 
+                    cleanedTitle = cleanedTitle.replace(new RegExp(`[\\s\\[\\(]*${escapeRegExp(timeMatch[0])}[\\s\\]\\)]*`, 'g'), ' ');
+                    timePrefix = `[${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}] `; 
                 }
 
                 cleanedTitle = cleanedTitle.replace(/(?:월|화|수|목|금|토|일)요일/g, ' ');
                 displayTitlePrefix = `[${month}/${day}] ｜ ${timePrefix}`;
-                
             } else {
                 sortKey = { month: 98, day: 98, isIlhyeop: true }; 
                 displayTitlePrefix = `[일협] ｜ `;
             }
 
-            cleanedTitle = cleanedTitle.replace(/[\[\(]\s*오프\s*[\]\)]/g, '___OFFLINE___');
-            cleanedTitle = cleanedTitle.replace(/오프/g, '___OFFLINE___');
-            cleanedTitle = cleanedTitle.replace(/[\[\(][\s/,\-~]*[\]\)]/g, ' ');
-            cleanedTitle = cleanedTitle.replace(/[\[\(\]\)]/g, ' ');
-            cleanedTitle = cleanedTitle.replace(/___OFFLINE___/g, '[오프]');
-            cleanedTitle = cleanedTitle.replace(/^[\]\)/\-,\s|?]+|[\[\(/\-,\s|?]+$/g, '');
-            cleanedTitle = cleanedTitle.replace(/\s+/g, ' ').trim();
+            cleanedTitle = cleanedTitle.replace(/[\[\(]\s*오프\s*[\]\)]/g, '___OFFLINE___')
+                                       .replace(/오프/g, '___OFFLINE___')
+                                       .replace(/[\[\(][\s/,\-~]*[\]\)]/g, ' ')
+                                       .replace(/[\[\(\]\)]/g, ' ')
+                                       .replace(/___OFFLINE___/g, '[오프]')
+                                       .replace(/^[\]\)/\-,\s|?]+|[\[\(/\-,\s|?]+$/g, '')
+                                       .replace(/\s+/g, ' ').trim();
 
             let displayTitle = displayTitlePrefix + cleanedTitle;
-
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
             if (now - lastTouchTime < 24 * 60 * 60 * 1000) {
                 displayTitle += " ⭐NEW!⭐";
             }
 
-            const postData = {
-                sortKey,
-                text: `${displayTitle} ([바로가기](${url}))`
-            };
-
+            const postData = { sortKey, text: `${displayTitle} ([바로가기](${url}))` };
             if (title.includes("마감") || title.includes("꽉") || title.includes("완료")) {
                 scheduleArr.push(postData);
             } else {
@@ -313,29 +367,18 @@ async function updateAnnouncementBoard() {
 
         const fetchAndProcessThreads = async (forumChannel, scheduleArr, recruitingArr) => {
             if (!forumChannel) return;
-
             const activeThreads = await forumChannel.threads.fetchActive();
-            for (const [_, thread] of activeThreads.threads) {
-                processThread(thread, scheduleArr, recruitingArr);
-            }
+            for (const [_, thread] of activeThreads.threads) processThread(thread, scheduleArr, recruitingArr);
 
             const archivedThreads = await forumChannel.threads.fetchArchived({ limit: 20 });
-            
-            const kstDateString = new Intl.DateTimeFormat('en-US', {
-                timeZone: 'Asia/Seoul',
-                month: 'numeric',
-                day: 'numeric'
-            }).format(new Date());
+            const kstDateString = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric' }).format(new Date());
             const [curMonth, curDay] = kstDateString.split('/').map(Number);
 
             for (const [_, thread] of archivedThreads.threads) {
-                const title = thread.name;
-                const dateMatch = title.match(/(\d{1,2})[월./\s\-]+(\d{1,2})(?:일)?/);
-                
+                const dateMatch = thread.name.match(DATE_PATTERN);
                 if (dateMatch) {
                     const month = parseInt(dateMatch[1], 10);
                     const day = parseInt(dateMatch[2], 10);
-                    
                     let isPast = false;
                     if (month < curMonth && (curMonth - month) < 6) isPast = true;
                     if (month === curMonth && day < curDay) isPast = true;
@@ -355,7 +398,6 @@ async function updateAnnouncementBoard() {
         await fetchAndProcessThreads(otherForum, otherScheduleList, otherRecruitingList);
 
         const sortFunction = (a, b) => (a.sortKey.month !== b.sortKey.month) ? a.sortKey.month - b.sortKey.month : a.sortKey.day - b.sortKey.day;
-        
         murderScheduleList.sort(sortFunction);
         murderRecruitingList.sort(sortFunction);
         otherScheduleList.sort(sortFunction);
@@ -410,10 +452,7 @@ async function updateAnnouncementBoard() {
             .setColor(0x95A5A6)
             .setDescription("💡 **수동 새로고침**\n동시 변경으로 인해 일정이 꼬이거나 누락된 경우 아래 버튼을 눌러주세요.");
 
-        await textChannel.send({ 
-            embeds: [refreshEmbed],
-            components: [refreshRow] 
-        });
+        await textChannel.send({ embeds: [refreshEmbed], components: [refreshRow] });
 
     } catch (error) {
         console.error("오류 발생:", error);
@@ -421,54 +460,338 @@ async function updateAnnouncementBoard() {
         isUpdatingSchedule = false;
         if (hasPendingScheduleUpdate) {
             hasPendingScheduleUpdate = false;
-            setTimeout(() => {
-                updateAnnouncementBoard().catch(console.error);
-            }, 1000);
+            setTimeout(() => updateAnnouncementBoard().catch(console.error), 1000);
         }
     }
 }
 
-// ================= [ 동시성 감지 및 스레드 이벤트 처리 ] =================
+// ================= [ 스레드 이벤트 리스너 ] =================
 function requestScheduleUpdate() {
     if (scheduleUpdateTimer) clearTimeout(scheduleUpdateTimer);
-    scheduleUpdateTimer = setTimeout(() => {
-        updateAnnouncementBoard().catch(console.error);
-    }, 3000); 
+    scheduleUpdateTimer = setTimeout(() => updateAnnouncementBoard().catch(console.error), 3000); 
 }
 
 const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
-
-function handleThreadEvent(thread, eventName) {
+function handleThreadEvent(thread) {
     if (!thread) return;
     const parentId = thread.parentId || thread.parent?.id;
-    if (watchChannels.includes(parentId)) {
-        requestScheduleUpdate();
-    }
+    if (watchChannels.includes(parentId)) requestScheduleUpdate();
 }
 
-client.on('threadCreate', async (t) => handleThreadEvent(t, '생성됨'));
-client.on('threadUpdate', async (b, a) => handleThreadEvent(a, '수정/열림/닫힘'));
-client.on('threadDelete', async (t) => handleThreadEvent(t, '삭제됨'));
+client.on('threadCreate', handleThreadEvent);
+client.on('threadUpdate', (b, a) => handleThreadEvent(a));
+client.on('threadDelete', handleThreadEvent);
 
-// ================= [ 명령어 처리 : 수동 강제 재생성용 ] =================
-client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
+// ================= [ 상호작용 통합 처리 ] =================
+client.on('interactionCreate', async (interaction) => {
+    
+    if (interaction.isChatInputCommand()) {
+        const { commandName } = interaction;
+        const taskId = interaction.id;
 
-    if (message.content === '!버튼생성' && message.channel.id === BUTTON_CHANNEL_ID) {
-        try {
-            await generateGuideMessage(message.channel);
-            await message.delete().catch(() => null);
-        } catch (err) {
-            console.error("수동 버튼 메뉴 생성 실패:", err);
+        // [0] 실행취소 (긴급 중단)
+        if (commandName === '실행취소') {
+            isGlobalCancelRequested = true;
+            for (const key of runningTasks.keys()) {
+                runningTasks.set(key, false);
+            }
+            setTimeout(() => { isGlobalCancelRequested = false; }, 3000);
+            return interaction.reply({ content: '🛑 현재 진행 중인 모든 대용량 분석 작업을 즉시 중단했습니다!', flags: ['Ephemeral'] });
+        }
+
+        // [A] 케미분석
+        if (commandName === '케미분석') {
+            await interaction.deferReply();
+            runningTasks.set(taskId, true);
+
+            const user1 = interaction.options.getUser('user1');
+            const user2 = interaction.options.getUser('user2');
+            const limit = interaction.options.getInteger('문장수') || 1300;
+
+            if (user1.id === user2.id) {
+                runningTasks.delete(taskId);
+                return interaction.followup({ content: '❌ 서로 다른 두 유저를 선택해주세요.' });
+            }
+
+            const targetChannels = (await Promise.all(
+                TARGET_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
+            )).filter(Boolean);
+
+            const allResults = await Promise.all(
+                targetChannels.map(ch => fetchChannelMessages(ch, limit, taskId))
+            );
+
+            if (runningTasks.get(taskId) === false || isGlobalCancelRequested) {
+                runningTasks.delete(taskId);
+                return interaction.followup({ content: '🛑 작업이 사용자에 의해 긴급 중단되었습니다.' });
+            }
+
+            let directInteractions = 0;
+            let normalTikitaka = 0;
+            let fastTikitaka = 0; // 30초 이내 폭풍 연속 대화
+            let reactionScore = 0; // 호응/웃음/긍정
+            const targetIds = new Set([user1.id, user2.id]);
+
+            for (const messages of allResults) {
+                const sortedMsgs = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+                let prevMsg = null;
+
+                for (const msg of sortedMsgs) {
+                    if (msg.author.id === user1.id) {
+                        if (msg.mentions.users.has(user2.id) || (msg.reference && msg.referencedMessage?.author?.id === user2.id)) {
+                            directInteractions++;
+                        }
+                    } else if (msg.author.id === user2.id) {
+                        if (msg.mentions.users.has(user1.id) || (msg.reference && msg.referencedMessage?.author?.id === user1.id)) {
+                            directInteractions++;
+                        }
+                    }
+
+                    if (prevMsg && targetIds.has(prevMsg.author.id) && targetIds.has(msg.author.id)) {
+                        if (prevMsg.author.id !== msg.author.id) {
+                            const timeDiff = msg.createdTimestamp - prevMsg.createdTimestamp;
+                            if (timeDiff <= 30000) {
+                                fastTikitaka++;
+                            } else if (timeDiff <= 180000) {
+                                normalTikitaka++;
+                            }
+                        }
+                    }
+
+                    if (targetIds.has(msg.author.id)) {
+                        if (/(ㅋ|ㅎ|좋아|굿|굳|인정|대박|맞아|ㄹㅇ|오호|감사|나이스)/.test(msg.content)) {
+                            reactionScore++;
+                        }
+                    }
+                    prevMsg = msg;
+                }
+            }
+
+            runningTasks.delete(taskId);
+
+            const totalScoreRaw = (directInteractions * 4.0) + (fastTikitaka * 2.8) + (normalTikitaka * 1.5) + (reactionScore * 0.35);
+            const chemiScore = totalScoreRaw > 0 ? Math.min(100, Math.floor(Math.sqrt(totalScoreRaw) * 11.2)) : 0;
+
+            let tier = "🧊 어색한 탐색 단계 (아직 낯가리는 사이)";
+            let summary = "최근 교류가 적은 편입니다. 먼저 채널에서 가볍게 멘션을 걸어보세요!";
+
+            if (chemiScore >= 88) {
+                tier = "💖 영혼의 단짝 (숨만 쉬어도 통하는 사이)";
+                summary = "빛의 속도로 오가는 폭풍 티키타카! 서버 공인 환상의 찰떡 듀오입니다.";
+            } else if (chemiScore >= 68) {
+                tier = "🔥 환상의 메이트 (최고의 게임/수다 파트너)";
+                summary = "대화 맥이 끊기지 않고 리액션과 맞장구가 훌륭하게 맞아떨어집니다.";
+            } else if (chemiScore >= 42) {
+                tier = "✨ 편안한 지인 (스몰토크 찰떡 단계)";
+                summary = "가벼운 안부와 일상을 부담 없이 편하게 주고받는 원만한 사이입니다.";
+            } else if (chemiScore >= 18) {
+                tier = "🌱 친해지는 중 (내적 친밀감 쌓는 중)";
+                summary = "조금씩 관심사를 맞춰가는 중입니다. 같이 게임이나 일정에 참여해보세요!";
+            }
+
+            const member1 = await interaction.guild.members.fetch(user1.id).catch(() => null);
+            const member2 = await interaction.guild.members.fetch(user2.id).catch(() => null);
+
+            const embed = new EmbedBuilder()
+                .setTitle(`🧪 ${member1?.displayName || user1.username} X ${member2?.displayName || user2.username} 케미 분석표`)
+                .setColor(0xFF6E96)
+                .setDescription("📅 **분석 범위:** `최근 약 3~7일간의 대화 티키타카 집중 분석`\n\u200B")
+                .addFields(
+                    { name: '🧬 케미 지수', value: `### **${chemiScore}점** / 100점\n\`${tier}\``, inline: false },
+                    { 
+                        name: '💬 실시간 상호작용 지표', 
+                        value: `• **직접 멘션 및 답장:** \`${directInteractions}회\`\n• **초고속 티키타카(30초 내):** \`${fastTikitaka}회\`\n• **일반 릴레이 대화:** \`${normalTikitaka}회\`\n• **호응 & 리액션 횟수:** \`${reactionScore}회\``, 
+                        inline: false 
+                    },
+                    { name: '📌 케미 진단 총평', value: `> ${summary}`, inline: false }
+                );
+
+            return interaction.followup({ embeds: [embed] });
+        }
+
+        // [B] 케미랭킹
+        if (commandName === '케미랭킹') {
+            await interaction.deferReply();
+            runningTasks.set(taskId, true);
+
+            const targetChannels = (await Promise.all(
+                TARGET_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
+            )).filter(Boolean);
+
+            const allResults = await Promise.all(
+                targetChannels.map(ch => fetchChannelMessages(ch, 1000, taskId))
+            );
+
+            if (runningTasks.get(taskId) === false || isGlobalCancelRequested) {
+                runningTasks.delete(taskId);
+                return interaction.followup({ content: '🛑 작업이 중단되었습니다.' });
+            }
+
+            const pairScores = {};
+
+            for (const messages of allResults) {
+                const sortedMsgs = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+                let prevMsg = null;
+
+                for (const msg of sortedMsgs) {
+                    if (msg.author.bot) continue;
+
+                    if (msg.reference && msg.referencedMessage?.author && !msg.referencedMessage.author.bot && msg.referencedMessage.author.id !== msg.author.id) {
+                        const pair = [msg.author.id, msg.referencedMessage.author.id].sort().join(':');
+                        pairScores[pair] = (pairScores[pair] || 0) + 3;
+                    }
+
+                    if (prevMsg && !prevMsg.author.bot && prevMsg.author.id !== msg.author.id) {
+                        if ((msg.createdTimestamp - prevMsg.createdTimestamp) <= 180000) {
+                            const pair = [msg.author.id, prevMsg.author.id].sort().join(':');
+                            pairScores[pair] = (pairScores[pair] || 0) + 2;
+                        }
+                    }
+                    prevMsg = msg;
+                }
+            }
+
+            runningTasks.delete(taskId);
+
+            const sortedPairs = Object.entries(pairScores).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+            if (sortedPairs.length === 0) {
+                return interaction.followup({ content: '분석할 교류 데이터가 충분하지 않습니다.' });
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle("🏆 실시간 서버 케미 랭킹 TOP 5")
+                .setColor(0xFFD700)
+                .setDescription("🔥 **현재 서버에서 가장 뜨거운 케미를 보여주고 있는 찰떡 듀오 순위입니다!**\n\u200B");
+
+            const rankIcons = ["🥇 1위", "🥈 2위", "🥉 3위", "4️⃣ 4위", "5️⃣ 5위"];
+
+            for (let i = 0; i < sortedPairs.length; i++) {
+                const [pairStr, score] = sortedPairs[i];
+                const [id1, id2] = pairStr.split(':');
+                const m1 = await interaction.guild.members.fetch(id1).catch(() => null);
+                const m2 = await interaction.guild.members.fetch(id2).catch(() => null);
+                const name1 = m1?.displayName || "유저";
+                const name2 = m2?.displayName || "유저";
+
+                embed.addFields({ 
+                    name: `${rankIcons[i]} ${name1} × ${name2}`, 
+                    value: `> 찰떡 상호작용 화력: **${score} pt**`, 
+                    inline: false 
+                });
+            }
+
+            return interaction.followup({ embeds: [embed] });
+        }
+
+        // [C] 케미잠재력
+        if (commandName === '케미잠재력') {
+            await interaction.deferReply();
+            runningTasks.set(taskId, true);
+            const targetUser = interaction.options.getUser('user');
+
+            const targetChannels = (await Promise.all(
+                TARGET_CHANNEL_IDS.map(id => interaction.guild.channels.fetch(id).catch(() => null))
+            )).filter(Boolean);
+
+            const allResults = await Promise.all(
+                targetChannels.map(ch => fetchChannelMessages(ch, 1300, taskId))
+            );
+
+            if (runningTasks.get(taskId) === false || isGlobalCancelRequested) {
+                runningTasks.delete(taskId);
+                return interaction.followup({ content: '🛑 작업이 중단되었습니다.' });
+            }
+
+            const userMsgs = allResults.flat().filter(m => m.author.id === targetUser.id && m.content);
+            runningTasks.delete(taskId);
+
+            if (userMsgs.length < 5) {
+                return interaction.followup({ 
+                    content: `앗, ${targetUser.username}님은 최근 서버에 자주 안 오셨군요! 🥺\n대화를 조금 더 나누어 숨겨진 케미 잠재력을 깨워주세요! 분발을 기대합니다! 🔥` 
+                });
+            }
+
+            const totalMsgs = userMsgs.length;
+            const avgLen = Math.floor(userMsgs.reduce((acc, m) => acc + m.content.length, 0) / totalMsgs);
+            
+            // 1. 심야 비율
+            const nightMsgs = userMsgs.filter(m => {
+                const hour = new Date(m.createdTimestamp + (9 * 60 * 60 * 1000)).getUTCHours();
+                return hour >= 0 && hour < 6;
+            }).length;
+            const nightRatio = Math.floor((nightMsgs / totalMsgs) * 100);
+
+            // 2. 웃음 비율
+            const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ)/.test(m.content)).length;
+            const laughRatio = Math.floor((laughMsgs / totalMsgs) * 100);
+
+            // 3. 물음표/질문 비율
+            const questionMsgs = userMsgs.filter(m => /(\?|물어|궁금)/.test(m.content)).length;
+            const questionRatio = Math.floor((questionMsgs / totalMsgs) * 100);
+
+            // 4. 이모지 및 특수문자 비율
+            const emojiMsgs = userMsgs.filter(m => /([\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]|[!~^;])/g.test(m.content)).length;
+            const emojiRatio = Math.floor((emojiMsgs / totalMsgs) * 100);
+
+            // 5. 최애 단어 TOP 3 추출
+            const wordCount = {};
+            for (const msg of userMsgs) {
+                const words = msg.content.replace(/[^가-힣a-zA-Z0-9\s]/g, ' ').split(/\s+/);
+                for (const w of words) {
+                    if (w.length >= 2 && !STOP_WORDS.has(w) && !/^(ㅋ+|ㅎ+|ㅜ+|ㅠ+)$/.test(w)) {
+                        wordCount[w] = (wordCount[w] || 0) + 1;
+                    }
+                }
+            }
+            const topWords = Object.entries(wordCount)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([word, cnt]) => `\`#${word}\`(${cnt}회)`)
+                .join(' ') || '`#데이터수집중`';
+
+            // 잠재력 유형 결정
+            let potentialType = "⚡ 번개 반응러";
+            let potentialDesc = "짧고 간결하게 대화 흐름을 바로바로 이어받아 주는 든든한 핑퐁러입니다.";
+
+            if (nightRatio >= 45) {
+                potentialType = "🌙 심야의 토크마스터";
+                potentialDesc = "모두가 잠든 새벽 시간대에 진가를 발휘하는 올빼미형 케미 장인입니다.";
+            } else if (laughRatio >= 55) {
+                potentialType = "💖 긍정 비타민형";
+                potentialDesc = "모든 말에 호응과 웃음을 가득 실어 분위기를 밝게 띄워주는 분위기 메이커입니다.";
+            } else if (avgLen >= 35) {
+                potentialType = "📜 정성 가득 스토리텔러";
+                potentialDesc = "차분하고 논리정연한 장문으로 깊이 있는 대화를 이끌어내는 타입입니다.";
+            } else if (questionRatio >= 28) {
+                potentialType = "🔍 호기심 가득 탐구자";
+                potentialDesc = "질문과 관심을 통해 상대방의 말문을 술술 열어주는 훌륭한 경청자입니다.";
+            }
+
+            const member = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+            const embed = new EmbedBuilder()
+                .setTitle(`✨ ${member?.displayName || targetUser.username}님의 케미 잠재력 리포트`)
+                .setColor(0x00D2D3)
+                .setDescription(`최근 대화 **${totalMsgs}개**를 기반으로 분석한 개인 소통 데이터입니다.\n\u200B`)
+                .addFields(
+                    { name: '🏷️ 소통 잠재력 유형', value: `**${potentialType}**\n> ${potentialDesc}`, inline: false },
+                    { name: '🏷️ 자주 쓰는 최애 키워드 TOP 3', value: `> ${topWords}`, inline: false },
+                    { 
+                        name: '📊 세부 소통 성향 지표', 
+                        value: `• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 25 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 30 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\`\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
+                        inline: false 
+                    }
+                );
+
+            return interaction.followup({ embeds: [embed] });
         }
     }
-});
 
-// ================= [ 상호작용 처리 : 버튼 클릭 이벤트 ] =================
-client.on('interactionCreate', async (interaction) => {
+    // -------------------------------------------------------------
+    // 버튼 클릭 이벤트
+    // -------------------------------------------------------------
     if (!interaction.isButton()) return;
 
-    // 1. 일정 현황판 수동 새로고침
     if (interaction.customId === 'btn_refresh_schedule') {
         await interaction.deferReply({ flags: [ 'Ephemeral' ] }); 
         try {
@@ -481,7 +804,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 2. 관전방 수동 초기화 및 갱신
     if (interaction.customId === 'btn_reset_all_spectate') {
         await interaction.deferReply({ flags: [ 'Ephemeral' ] });
         try {
@@ -495,7 +817,6 @@ client.on('interactionCreate', async (interaction) => {
         return;
     }
 
-    // 3. 관전 신청 버튼 (A/B/C)
     if (ROOM_CONFIG[interaction.customId]) {
         const config = ROOM_CONFIG[interaction.customId];
         await interaction.deferReply({ flags: [ 'Ephemeral' ] });
@@ -575,7 +896,6 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // 4. 관전방 개별 삭제 버튼
     if (interaction.customId === 'btn_close_spectate') {
         const currentChannel = interaction.channel;
         const guild = interaction.guild;
@@ -607,6 +927,20 @@ client.on('interactionCreate', async (interaction) => {
 
         } catch (error) {
             console.error('관전방 종료 처리 중 오류:', error);
+        }
+    }
+});
+
+// ================= [ 수동 버튼 생성 ] =================
+client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+
+    if (message.content === '!버튼생성' && message.channel.id === BUTTON_CHANNEL_ID) {
+        try {
+            await generateGuideMessage(message.channel);
+            await message.delete().catch(() => null);
+        } catch (err) {
+            console.error("수동 버튼 메뉴 생성 실패:", err);
         }
     }
 });
