@@ -73,7 +73,7 @@ let isGlobalCancelRequested = false;
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('케미분석')
-        .setDescription('🧪 같이 한 게임 기록과 일상 티키타카를 종합한 1:1 케미 리포트')
+        .setDescription('🧪 동반 게임, 티키타카, 리액션, 시간대 동기화를 종합한 1:1 정밀 케미 리포트')
         .addUserOption(opt => opt.setName('user1').setDescription('첫 번째 유저').setRequired(true))
         .addUserOption(opt => opt.setName('user2').setDescription('두 번째 유저').setRequired(true))
         .addIntegerOption(opt => opt.setName('문장수').setDescription('채널당 분석할 메시지 수 (기본 600개)').setRequired(false)),
@@ -84,7 +84,7 @@ const slashCommands = [
 
     new SlashCommandBuilder()
         .setName('케미잠재력')
-        .setDescription('✨ 10점 만점 지표와 소통 성향으로 분석하는 개인 케미 잠재력 리포트')
+        .setDescription('✨ 10점 만점 지표와 심야 시간대별 가중치로 분석하는 개인 케미 잠재력 리포트')
         .addUserOption(opt => opt.setName('user').setDescription('분석할 대상 유저').setRequired(true)),
 
     new SlashCommandBuilder()
@@ -505,7 +505,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.reply({ content: '🛑 진행 중이던 모든 분석 작업을 즉시 중단하고 대기 상태를 해제했습니다!', flags: ['Ephemeral'] });
         }
 
-        // [A] 케미분석
+        // [A] 케미분석 (다차원 로그 스케일링 & 100점 쏠림 방지)
         if (commandName === '케미분석') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
@@ -538,6 +538,7 @@ client.on('interactionCreate', async (interaction) => {
                 return interaction.editReply({ content: '🛑 작업이 사용자에 의해 중단되었습니다.' }).catch(() => null);
             }
 
+            // 1. 게임 동반 플레이 분석 (로그 스케일링)
             let sharedGameCount = 0;
             for (const msg of gameLogMsgs) {
                 const content = msg.content;
@@ -546,17 +547,25 @@ client.on('interactionCreate', async (interaction) => {
                 if (hasUser1 && hasUser2) sharedGameCount++;
             }
 
+            // 2. 대화 세부 지표 분석
             let directInteractions = 0;
             let normalTikitaka = 0;
             let fastTikitaka = 0;
-            let reactionScore = 0;
+            let mutualReaction = 0;
             const targetIds = new Set([user1.id, user2.id]);
+
+            const user1Hours = new Set();
+            const user2Hours = new Set();
 
             for (const messages of chatMsgsList) {
                 const sortedMsgs = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
                 let prevMsg = null;
 
                 for (const msg of sortedMsgs) {
+                    const hour = new Date(msg.createdTimestamp + (9 * 60 * 60 * 1000)).getUTCHours();
+                    if (msg.author.id === user1.id) user1Hours.add(hour);
+                    if (msg.author.id === user2.id) user2Hours.add(hour);
+
                     if (msg.author.id === user1.id) {
                         if (msg.mentions.users.has(user2.id) || (msg.reference && msg.referencedMessage?.author?.id === user2.id)) directInteractions++;
                     } else if (msg.author.id === user2.id) {
@@ -572,7 +581,7 @@ client.on('interactionCreate', async (interaction) => {
                     }
 
                     if (targetIds.has(msg.author.id)) {
-                        if (/(ㅋ|ㅎ|좋아|굿|굳|인정|대박|맞아|ㄹㅇ|오호|감사|나이스|재밌|웃겨)/.test(msg.content)) reactionScore++;
+                        if (/(ㅋ|ㅎ|좋아|굿|굳|인정|대박|맞아|ㄹㅇ|오호|감사|나이스|재밌|웃겨)/.test(msg.content)) mutualReaction++;
                     }
                     prevMsg = msg;
                 }
@@ -580,40 +589,53 @@ client.on('interactionCreate', async (interaction) => {
 
             activeTasks.delete(taskId);
 
-            const totalScoreRaw = (sharedGameCount * 18.0) + (directInteractions * 4.0) + (fastTikitaka * 2.8) + (normalTikitaka * 1.3) + (reactionScore * 0.35);
-            const chemiScore = totalScoreRaw > 0 ? Math.min(100, Math.floor(Math.sqrt(totalScoreRaw) * 11.0)) : 0;
+            // ================= [ 다차원 케미 분산 계산 로직 ] =================
+            // A. 게임 호흡 점수 (최대 35점): 1회=8점, 5회=20점, 15회=30점, 30회 이상=35점 (체감 곡선)
+            const gameScore = Math.min(35, Math.round(Math.log1p(sharedGameCount) * 10.2));
+
+            // B. 일상 핑퐁 화력 (최대 30점): 직접 멘션 및 연속 대화량
+            const rawChat = (directInteractions * 2.5) + (fastTikitaka * 2.0) + (normalTikitaka * 0.8);
+            const chatScore = Math.min(30, Math.round(Math.log1p(rawChat) * 6.5));
+
+            // C. 긍정 리액션 교류 (최대 20점)
+            const reactionScore = Math.min(20, Math.round(Math.log1p(mutualReaction) * 4.8));
+
+            // D. 활동 시간대 동기화 (최대 15점)
+            const overlapHours = [...user1Hours].filter(h => user2Hours.has(h)).length;
+            const timeSyncScore = Math.min(15, Math.round((overlapHours / 12) * 15));
+
+            // 종합 케미 지수 (100점 만점)
+            const chemiScore = Math.min(99, gameScore + chatScore + reactionScore + timeSyncScore);
 
             let tier = "🧊 어색한 탐색 단계 (낯가리는 사이)";
-            let summary = "아직 함께한 게임이나 교류가 적은 편입니다. 같이 구인에 참가해보세요!";
+            let summary = "아직 함께한 게임이나 교류가 적은 편입니다. 같이 보드게임이나 구인에 참가해보세요!";
 
             if (chemiScore >= 88) {
-                tier = "💖 영혼의 단짝 (서버 공인 고정 파티)";
-                summary = "게임도 같이 많이 달리고 대화 티키타카까지 완벽한 환상의 듀오입니다!";
-            } else if (chemiScore >= 68) {
-                tier = "🔥 든든한 게임 메이트 (믿고 보는 조합)";
-                summary = "플레이 기록이 풍부하며 대화 호응과 핑퐁이 아주 뛰어납니다.";
-            } else if (chemiScore >= 42) {
-                tier = "✨ 편안한 지인 (스몰토크 최적화)";
-                summary = "가벼운 일상과 안부를 나누기 편안하고 원만한 사이입니다.";
-            } else if (chemiScore >= 18) {
-                tier = "🌱 친해지는 중 (친밀감 형성 단계)";
-                summary = "서로 알아가는 중입니다. 다음 머미나 보드게임 일정을 함께 잡아보세요!";
+                tier = "👑 절대적 소울메이트 (서버 공인 환상의 페어)";
+                summary = "게임 합부터 대화 핑퐁, 활동 시간대까지 완벽하게 일치하는 대체 불가능한 듀오입니다!";
+            } else if (chemiScore >= 72) {
+                tier = "🔥 찰떡 호흡 게임 메이트 (믿고 보는 조합)";
+                summary = "플레이 기록과 대화 텐션이 아주 뛰어나며 함께할 때 높은 시너지를 냅니다.";
+            } else if (chemiScore >= 55) {
+                tier = "✨ 환상의 티키타카 지인 (편안한 소통러)";
+                summary = "자연스럽게 대화가 이어지고 호응과 리액션이 활발한 원만한 사이입니다.";
+            } else if (chemiScore >= 35) {
+                tier = "🌱 친밀감 형성 단계 (알아가는 중)";
+                summary = "가벼운 인사를 나누며 관심사를 맞춰가는 중입니다. 다음 일정을 함께 잡아보세요!";
             }
 
             const embed = new EmbedBuilder()
-                .setTitle(`🧪 ${name1} X ${name2} 케미 분석표`)
+                .setTitle(`🧪 ${name1} X ${name2} 다차원 케미 정밀 보고서`)
                 .setColor(0xFF6E96)
-                .setDescription("📅 **분석 범위:** `게임 동반 플레이 기록 + 일상 대화 티키타카 종합 분석`\n\u200B")
+                .setDescription("📅 **분석 범위:** `동반 게임 기록 + 핑퐁 화력 + 긍정 리액션 + 활동 시간대 동기화`\n\u200B")
                 .addFields(
-                    { name: '🧬 케미 지수', value: `### **${chemiScore}점** / 100점\n\`${tier}\``, inline: false },
+                    { name: '🧬 종합 케미 지수', value: `### **${chemiScore}점** / 100점\n\`${tier}\``, inline: false },
                     { 
-                        name: '🎮 게임 활동 연계 지표', 
-                        value: `• **동반 플레이 기록:** \`${sharedGameCount}회\` (케미 지수 강력 반영 🚀)`, 
-                        inline: false 
-                    },
-                    { 
-                        name: '💬 실시간 대화 상호작용', 
-                        value: `• **직접 멘션/답장:** \`${directInteractions}회\`\n• **초고속 티키타카(30초 내):** \`${fastTikitaka}회\`\n• **호응 & 리액션:** \`${reactionScore}회\``, 
+                        name: '📊 세부 영역별 케미 스펙트럼', 
+                        value: `• 🎮 **동반 게임 호흡:** \`${gameScore}점\` / 35점 (동반 플레이 \`${sharedGameCount}회\`)\n` +
+                               `• 💬 **일상 핑퐁 화력:** \`${chatScore}점\` / 30점 (직접 교류 \`${directInteractions}회\`)\n` +
+                               `• 💖 **리액션 긍정력:** \`${reactionScore}점\` / 20점 (호응 \`${mutualReaction}회\`)\n` +
+                               `• ⏰ **시간대 동기화:** \`${timeSyncScore}점\` / 15점 (겹치는 활동 \`${overlapHours}개 시간대\`)`, 
                         inline: false 
                     },
                     { name: '📌 케미 진단 총평', value: `> ${summary}`, inline: false }
@@ -712,7 +734,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.editReply({ embeds: [embed] });
         }
 
-        // [C] 케미잠재력 (10점 만점 척도 & 5가지 균형 유형)
+        // [C] 케미잠재력 (심야 시간대별 가중치 & 10점 척도 정밀화)
         if (commandName === '케미잠재력') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
@@ -743,7 +765,7 @@ client.on('interactionCreate', async (interaction) => {
                 });
             }
 
-            // 1. 접속 체류 시간 및 상주력 계산
+            // 1. 실시간 접속 체류 시간
             const timestamps = userMsgs.map(m => m.createdTimestamp).sort((a, b) => a - b);
             let totalDurationMs = 0;
             let sessionStart = timestamps[0];
@@ -766,45 +788,53 @@ client.on('interactionCreate', async (interaction) => {
             const totalMsgs = userMsgs.length;
             const avgLen = Math.floor(userMsgs.reduce((acc, m) => acc + m.content.length, 0) / totalMsgs);
             
-            // 심야 비율
-            const nightMsgs = userMsgs.filter(m => {
+            // 2. 심야 시간대별 가중치 계산 (심야 올빼미 현실 보정)
+            let nightWeightedPoints = 0;
+            for (const m of userMsgs) {
                 const hour = new Date(m.createdTimestamp + (9 * 60 * 60 * 1000)).getUTCHours();
-                return hour >= 0 && hour < 6;
-            }).length;
-            const rawNightRatio = (nightMsgs / totalMsgs) * 100;
+                if (hour >= 2 && hour < 4) {
+                    nightWeightedPoints += 3.0; // 새벽 2시~4시 (심야 피크)
+                } else if ((hour >= 0 && hour < 2) || (hour >= 4 && hour < 6)) {
+                    nightWeightedPoints += 2.0; // 새벽 0~2시, 4~6시
+                } else if (hour >= 23 || hour === 6) {
+                    nightWeightedPoints += 1.0; // 심야 초입/마감
+                }
+            }
+            // 10점 만점 환산 (야간 포인트 15점 이상이면 10점 만점)
+            const nightScore = Math.min(10, +(nightWeightedPoints / 1.8).toFixed(1));
 
-            // 웃음 비율
+            // 3. 웃음 & 긍정 리액션
             const laughMsgs = userMsgs.filter(m => /(ㅋ|ㅎ|ㅜ|ㅠ|웃겨|웃기|재밌|잼따|개웃|꿀잼|ㅎㅎ|ㅋㅋ|푸하|대박|좋아|굳|굿)/.test(m.content)).length;
             const rawLaughRatio = (laughMsgs / totalMsgs) * 100;
+            const laughScore = Math.min(10, +((rawLaughRatio * 1.8) / 10).toFixed(1));
 
-            // 질문 빈도 비율
+            // 4. 질문 빈도 비율
             const questionMsgs = userMsgs.filter(m => /(\?|물어|궁금|인가요|맞나요|어때|언제|누구|뭐임|머임)/.test(m.content)).length;
             const rawQuestionRatio = (questionMsgs / totalMsgs) * 100;
+            const questionScore = Math.min(10, +(rawQuestionRatio / 2.8).toFixed(1));
 
-            // 감정/이모지 표현 비율
+            // 5. 감정/이모지 표현력
             const emojiMsgs = userMsgs.filter(m => /([\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]|[!~^;])/g.test(m.content)).length;
             const rawEmojiRatio = (emojiMsgs / totalMsgs) * 100;
+            const emojiScore = Math.min(10, +(rawEmojiRatio / 4.8).toFixed(1));
 
-            // ================= [ 10점 만점 척도 변환 헬퍼 ] =================
+            // 6. 서버 상주 지속력
+            const presenceScore = Math.min(10, +(activeMinutes / 10.0).toFixed(1));
+
+            // 등급 텍스트 헬퍼
             const getGradeText = (score) => {
                 if (score >= 7.5) return '【상 🟢】';
                 if (score >= 4.0) return '【중 🟡】';
                 return '【하 ⚪】';
             };
 
-            const nightScore = Math.min(10, +(rawNightRatio / 3.0).toFixed(1));          // 심야 30%면 10점
-            const laughScore = Math.min(10, +((rawLaughRatio * 1.8) / 10).toFixed(1));    // 웃음 55%면 10점
-            const questionScore = Math.min(10, +(rawQuestionRatio / 2.5).toFixed(1));     // 질문 25%면 10점
-            const emojiScore = Math.min(10, +(rawEmojiRatio / 5.0).toFixed(1));          // 감정표현 50%면 10점
-            const presenceScore = Math.min(10, +(activeMinutes / 10.0).toFixed(1));       // 100분 상주 시 10점
-
-            // ================= [ 5가지 균형 유형 결정 알고리즘 ] =================
+            // ================= [ 5가지 균형 유형 결정 ] =================
             const typeScores = {
-                stay: presenceScore * 1.1,         // 서버 터줏대감형
-                laugh: laughScore * 1.0,           // 긍정 비타민형
-                night: nightScore * 1.1,           // 심야의 토크마스터
-                story: Math.min(10, (avgLen / 2.5)) * 1.0, // 정성 스토리텔러 (평균 25자 기준)
-                question: questionScore * 0.9      // 호기심 탐구자 (과다 방지용 가중치 0.9)
+                stay: presenceScore * 1.05,
+                laugh: laughScore * 1.0,
+                night: nightScore * 1.15, // 심야 가중치 정상 반영
+                story: Math.min(10, (avgLen / 2.3)) * 1.0,
+                question: questionScore * 0.85 // 과다 판정 완화
             };
 
             const topType = Object.entries(typeScores).sort((a, b) => b[1] - a[1])[0][0];
@@ -861,12 +891,12 @@ client.on('interactionCreate', async (interaction) => {
                     { name: '🏷️ 자주 쓰는 최애 키워드 TOP 3', value: `> ${topWords}`, inline: false },
                     { 
                         name: '📊 10점 만점 일상 소통 지표', 
-                        value: `• **서버 상주 지속력:** \`${presenceScore}점\` / 10점 ${getGradeText(presenceScore)}\n` +
+                        value: `• **심야 활동 올빼미:** \`${nightScore}점\` / 10점 ${getGradeText(nightScore)}\n` +
+                               `• **서버 상주 지속력:** \`${presenceScore}점\` / 10점 ${getGradeText(presenceScore)}\n` +
                                `• **웃음 & 리액션력:** \`${laughScore}점\` / 10점 ${getGradeText(laughScore)}\n` +
                                `• **감정/이모지 표현:** \`${emojiScore}점\` / 10점 ${getGradeText(emojiScore)}\n` +
-                               `• **심야 활동 올빼미:** \`${nightScore}점\` / 10점 ${getGradeText(nightScore)}\n` +
                                `• **질문 호기심 지수:** \`${questionScore}점\` / 10점 ${getGradeText(questionScore)}\n` +
-                               `• **평균 문장 호흡:** \`평균 ${avgLen}자\` (${avgLen >= 20 ? '장문 서사파' : '단문 핑퐁파'})`,
+                               `• **평균 문장 호흡:** \`평균 ${avgLen}자\` (${avgLen >= 20 ? '장문 서사파' : '단문 핑퐁파'})`, 
                         inline: false 
                     }
                 );
