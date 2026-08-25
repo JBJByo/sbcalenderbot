@@ -69,7 +69,7 @@ const ILHYEOP_PATTERN = /[(\[][\s]*(?:일협|일정협의)[\s]*[)\]]|(?:일협|�
 const activeTasks = new Map();
 let isGlobalCancelRequested = false;
 
-// ================= [ 슬래시 명령어 정의 (접속랭킹 제외 및 4개 명령어 구성) ] =================
+// ================= [ 슬래시 명령어 정의 ] =================
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('케미분석')
@@ -84,7 +84,7 @@ const slashCommands = [
 
     new SlashCommandBuilder()
         .setName('케미잠재력')
-        .setDescription('✨ 접속 체류 시간, 최애 키워드, 소통 스타일을 종합 분석하는 개인 케미 잠재력 리포트')
+        .setDescription('✨ 최애 키워드, 상주도, 소통 스타일을 종합 분석하는 개인 케미 잠재력 리포트')
         .addUserOption(opt => opt.setName('user').setDescription('분석할 대상 유저').setRequired(true)),
 
     new SlashCommandBuilder()
@@ -712,7 +712,7 @@ client.on('interactionCreate', async (interaction) => {
             return interaction.editReply({ embeds: [embed] });
         }
 
-        // [C] 케미잠재력 (접속 체류 시간 및 상주력 점수 내장)
+        // [C] 케미잠재력
         if (commandName === '케미잠재력') {
             await interaction.deferReply();
             activeTasks.set(taskId, { interaction, isCancelled: false });
@@ -743,7 +743,7 @@ client.on('interactionCreate', async (interaction) => {
                 });
             }
 
-            // 1. 실시간 접속 체류 시간 계산 (5분 세션 기준)
+            // 1. 접속 체류 시간 기반 단골 칭호 산출
             const timestamps = userMsgs.map(m => m.createdTimestamp).sort((a, b) => a - b);
             let totalDurationMs = 0;
             let sessionStart = timestamps[0];
@@ -763,18 +763,14 @@ client.on('interactionCreate', async (interaction) => {
             totalDurationMs += Math.max(prevTime - sessionStart, 60000);
             const activeMinutes = Math.max(1, Math.round(totalDurationMs / (60 * 1000)));
 
-            const hours = Math.floor(activeMinutes / 60);
-            const remainMins = activeMinutes % 60;
-            const stayTimeStr = hours > 0 ? `${hours}시간 ${remainMins}분` : `${remainMins}분`;
+            // 단골 정도 칭호 단어화
+            let presenceTitle = "스쳐가는 바람 🍃";
+            if (activeMinutes >= 120) presenceTitle = "서버 터줏대감 🏰";
+            else if (activeMinutes >= 60) presenceTitle = "찐 단골 손님 ☕";
+            else if (activeMinutes >= 25) presenceTitle = "자주 들르는 이웃 🏃";
+            else if (activeMinutes >= 10) presenceTitle = "가벼운 마실러 🎈";
 
-            // 접속 상주력 점수 (120분 이상이면 100점 만점)
-            const presenceScore = Math.min(100, Math.floor((activeMinutes / 120) * 100));
-            let presenceTier = "🌱 라이트 상주러 (잠깐 들러 소통하는 편)";
-            if (presenceScore >= 80) presenceTier = "🏰 서버 터줏대감 (항상 서버를 지키는 핵심 멤버)";
-            else if (presenceScore >= 50) presenceTier = "☕ 단골 손님 (주기적으로 오래 머무르는 스타일)";
-            else if (presenceScore >= 25) presenceTier = "✨ 활발한 방문자 (적절한 주기로 소통 참여)";
-
-            // 2. 소통 스타일 지표 계산
+            // 2. 소통 지표 계산
             const totalMsgs = userMsgs.length;
             const avgLen = Math.floor(userMsgs.reduce((acc, m) => acc + m.content.length, 0) / totalMsgs);
             
@@ -850,18 +846,13 @@ client.on('interactionCreate', async (interaction) => {
             const embed = new EmbedBuilder()
                 .setTitle(`✨ ${targetDisplayName}님의 케미 잠재력 리포트`)
                 .setColor(0x00D2D3)
-                .setDescription(`최근 일상 대화 **${totalMsgs}개**를 기반으로 분석한 개인 종합 소통 데이터입니다.\n\u200B`)
+                .setDescription(`최근 일상 대화 **${totalMsgs}개**를 기반으로 분석한 개인 소통 데이터입니다.\n\u200B`)
                 .addFields(
                     { name: '🏷️ 소통 잠재력 유형', value: `**${potentialType}**\n> ${potentialDesc}`, inline: false },
-                    { 
-                        name: '⏱️ 서버 접속 상주력', 
-                        value: `### **${presenceScore}점** / 100점 (누적 약 \`${stayTimeStr}\` 활동)\n\`${presenceTier}\``, 
-                        inline: false 
-                    },
                     { name: '🏷️ 자주 쓰는 최애 키워드 TOP 3', value: `> ${topWords}`, inline: false },
                     { 
                         name: '📊 세부 일상 소통 지표', 
-                        value: `• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 20 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 20 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\` (😆 긍정 에너지!)\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
+                        value: `• **서버 상주 단골도:** \`${presenceTitle}\`\n• **평균 문장 길이:** \`${avgLen}자\` (${avgLen >= 20 ? '정성 장문파' : '스피드 단문파'})\n• **심야 활동률:** \`${nightRatio}%\` (${nightRatio >= 20 ? '🌙 야행성' : '☀️ 주간파'})\n• **웃음 장착도:** \`${laughRatio}%\` (😆 긍정 에너지!)\n• **감정/이모지 표현력:** \`${emojiRatio}%\`\n• **질문 빈도율:** \`${questionRatio}%\``,
                         inline: false 
                     }
                 );
