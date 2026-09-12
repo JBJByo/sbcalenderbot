@@ -318,14 +318,16 @@ async function updateAnnouncementBoard() {
                     return; 
                 }
 
-                sortKey = { month, day, isIlhyeop: false };
                 const escapeRegExp = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                 cleanedTitle = cleanedTitle.replace(new RegExp(`[\\s\\[\\(]*${escapeRegExp(dateMatch[0])}[\\s\\]\\)]*`, 'g'), ' ');
 
                 let timePrefix = "";
+                let hour = 99;   // 시간이 없으면 해당 날짜의 맨 뒤로 보내기 위한 기본값
+                let minute = 99;
+
                 if (timeMatch) {
-                    let hour = parseInt(timeMatch[2], 10);
-                    let minute = 0;
+                    hour = parseInt(timeMatch[2], 10);
+                    minute = 0;
 
                     if (timeMatch[3]) {
                         minute = parseInt(timeMatch[3], 10);
@@ -347,10 +349,12 @@ async function updateAnnouncementBoard() {
                     timePrefix = `[${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}] `; 
                 }
 
+                sortKey = { month, day, hour, minute, isIlhyeop: false };
+
                 cleanedTitle = cleanedTitle.replace(/(?:월|화|수|목|금|토|일)요일/g, ' ');
                 displayTitlePrefix = `[${month}/${day}] ｜ ${timePrefix}`;
             } else {
-                sortKey = { month: 98, day: 98, isIlhyeop: true }; 
+                sortKey = { month: 98, day: 98, hour: 99, minute: 99, isIlhyeop: true }; 
                 displayTitlePrefix = `[일협] ｜ `;
             }
 
@@ -408,7 +412,14 @@ async function updateAnnouncementBoard() {
         const otherForum = await client.channels.fetch(OTHER_FORUM_ID).catch(() => null);
         await fetchAndProcessThreads(otherForum, otherScheduleList, otherRecruitingList);
 
-        const sortFunction = (a, b) => (a.sortKey.month !== b.sortKey.month) ? a.sortKey.month - b.sortKey.month : a.sortKey.day - b.sortKey.day;
+        // 월 -> 일 -> 시 -> 분 순서로 정렬
+        const sortFunction = (a, b) => {
+            if (a.sortKey.month !== b.sortKey.month) return a.sortKey.month - b.sortKey.month;
+            if (a.sortKey.day !== b.sortKey.day) return a.sortKey.day - b.sortKey.day;
+            if (a.sortKey.hour !== b.sortKey.hour) return a.sortKey.hour - b.sortKey.hour;
+            return a.sortKey.minute - b.sortKey.minute;
+        };
+
         murderScheduleList.sort(sortFunction);
         murderRecruitingList.sort(sortFunction);
         otherScheduleList.sort(sortFunction);
