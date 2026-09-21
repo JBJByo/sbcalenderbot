@@ -54,7 +54,7 @@ const OTHER_FORUM_ID = "1518830708179730563";
 const ANNOUNCEMENT_TEXT_ID = "1515045364045053952";
 const BUTTON_CHANNEL_ID = "1519706442209300521"; 
 
-// 3개 방 관전 설정창
+// 3개 방 관전 설정
 const ROOM_CONFIG = {
     'btn_create_a': { roomKey: 'A', roomName: 'A방-관전채팅', categoryId: '1442440229696045130', roleId: '1519716902589563071', displayName: 'A방 관전 신청' },
     'btn_create_b': { roomKey: 'B', roomName: 'B방-관전채팅', categoryId: '1469981664531972291', roleId: '1519716927881084980', displayName: 'B방 관전 신청' },
