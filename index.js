@@ -1,4 +1,56 @@
 require('dotenv').config();
+
+// Diagnostic logging: stdout (Railway) + bounded local files. No message bodies.
+const diagFs = require('fs');
+const diagPath = require('path');
+const diagCrypto = require('crypto');
+const diagUtil = require('util');
+const DIAG_RUN = diagCrypto.randomUUID();
+const DIAG_SOURCE = diagCrypto.createHash('sha256').update(diagFs.readFileSync(__filename)).digest('hex').slice(0, 16);
+const DIAG_HOST = process.env.RAILWAY_SERVICE_ID ? 'railway' : 'local-or-other';
+const DIAG_DIR = process.env.BOT_LOG_DIR || diagPath.join(__dirname, 'logs');
+const DIAG_FILE = diagPath.join(DIAG_DIR, `bot-${process.pid}-${DIAG_RUN.slice(0,8)}.log`);
+const diagOutput = console.log.bind(console);
+let diagFileEnabled = true;
+function diagRedact(value) {
+    let text = String(value);
+    if (process.env.DISCORD_TOKEN) text = text.split(process.env.DISCORD_TOKEN).join('[REDACTED]');
+    return text.replace(/(\/interactions\/\d+\/)[^/\s?]+/g, '$1[REDACTED]')
+        .replace(/(\/webhooks\/\d+\/)[^/\s?]+/g, '$1[REDACTED]')
+        .replace(/\b(Bot|Bearer)\s+[^\s'"\\]+/g, '$1 [REDACTED]');
+}
+function diagnostic(event, data = {}) {
+    const line = diagRedact(JSON.stringify({time: new Date().toISOString(), event, run: DIAG_RUN,
+        host: DIAG_HOST, pid: process.pid, source: DIAG_SOURCE, ...data}));
+    diagOutput(line);
+    if (!diagFileEnabled) return;
+    try {
+        diagFs.mkdirSync(DIAG_DIR, {recursive: true});
+        if (diagFs.existsSync(DIAG_FILE) && diagFs.statSync(DIAG_FILE).size > 5 * 1024 * 1024) {
+            for (let i = 2; i >= 1; i--) {
+                const from = `${DIAG_FILE}.${i}`, to = `${DIAG_FILE}.${i+1}`;
+                if (diagFs.existsSync(from)) diagFs.renameSync(from, to);
+            }
+            diagFs.renameSync(DIAG_FILE, `${DIAG_FILE}.1`);
+        }
+        diagFs.appendFileSync(DIAG_FILE, line + '\n');
+    } catch (error) {
+        diagFileEnabled = false;
+        diagOutput(JSON.stringify({event: 'log_file_unavailable', message: diagRedact(error.message)}));
+    }
+}
+for (const level of ['log', 'warn', 'error']) {
+    console[level] = (...args) => diagnostic(`console_${level}`, {message: args.map(arg =>
+        arg instanceof Error ? `${arg.name}: ${arg.message}\n${arg.stack || ''}\ncode=${arg.code || ''}` :
+        typeof arg === 'string' ? arg : diagUtil.inspect(arg, {depth: 2})).join(' ')});
+}
+process.on('uncaughtExceptionMonitor', (error, origin) => diagnostic('fatal',
+    {origin, message: error.message, stack: error.stack, code: error.code}));
+process.on('exit', code => diagnostic('process_exit', {code}));
+diagnostic('boot', {node: process.version, tokenPresent: Boolean(process.env.DISCORD_TOKEN),
+    commit: process.env.RAILWAY_GIT_COMMIT_SHA || null, deployment: process.env.RAILWAY_DEPLOYMENT_ID || null,
+    logFile: DIAG_FILE});
+
 const { 
     Client, 
     GatewayIntentBits, 
@@ -16,7 +68,7 @@ const {
 const http = require('http');
 
 // ================= [ Render 잠자기 방지용 가짜 웹 서버 ] =================
-const PORT = process.env.PORT || 3012;
+const PORT = process.env.PORT || 3008;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('🤖 디스코드 봇이 정상 구동 중입니다!');
@@ -34,6 +86,21 @@ const client = new Client({
     ],
     partials: [Partials.Channel, Partials.ThreadMember],
 });
+
+client.on('error', error => console.error('discord_client_error', error));
+client.on('shardError', (error, shard) => console.error('discord_shard_error', shard, error));
+client.on('shardDisconnect', (event, shard) => diagnostic('discord_disconnect', {shard, code: event.code}));
+client.on('shardReconnecting', shard => diagnostic('discord_reconnecting', {shard}));
+client.on('shardResume', (shard, replayed) => diagnostic('discord_resumed', {shard, replayed}));
+client.on('warn', message => console.warn('discord_warning', message));
+let diagnosticHeartbeatAt = Date.now();
+setInterval(() => {
+    const now = Date.now();
+    diagnostic('heartbeat', {ready: client.isReady(), uptimeSeconds: Math.round(process.uptime()),
+        pingMs: client.ws.ping, loopDelayMs: Math.max(0, now - diagnosticHeartbeatAt - 60000),
+        scheduleBusy: isUpdatingSchedule, schedulePending: hasPendingScheduleUpdate});
+    diagnosticHeartbeatAt = now;
+}, 60000).unref();
 
 // [서버 및 채널 설정]
 const GUILD_ID = "1442440228546678796";
@@ -125,6 +192,7 @@ async function fetchChannelMessages(channel, limit = 600, taskId = null) {
 }
 
 client.on('clientReady', async (c) => {
+    diagnostic('discord_ready', {botId: c.user.id});
     console.log(`🤖 ${c.user.tag} 봇 로그인 완료!`);
 
     try {
@@ -138,7 +206,7 @@ client.on('clientReady', async (c) => {
         console.error('슬래시 명령어 등록 실패:', error);
     }
 
-    await updateAnnouncementBoard().catch(console.error);
+    await updateAnnouncementBoard('startup').catch(console.error);
     await autoDeployGuideAndButtons().catch(console.error);
 });
 
@@ -273,16 +341,23 @@ let isUpdatingSchedule = false;
 let hasPendingScheduleUpdate = false; 
 let scheduleUpdateTimer = null;
 
-async function updateAnnouncementBoard() {
+let diagnosticScheduleSequence = 0;
+async function updateAnnouncementBoard(reason = 'unspecified') {
+    diagnostic('schedule_requested', {reason, busy: isUpdatingSchedule});
     if (isUpdatingSchedule) {
+        diagnostic('schedule_queued', {reason});
         hasPendingScheduleUpdate = true;
         return;
     }
     isUpdatingSchedule = true;
+    const updateId = ++diagnosticScheduleSequence;
+    const started = Date.now();
+    let outcome = 'incomplete';
+    diagnostic('schedule_start', {updateId, reason});
 
     try {
         const textChannel = await client.channels.fetch(ANNOUNCEMENT_TEXT_ID).catch(() => null);
-        if (!textChannel) return;
+        if (!textChannel) { diagnostic('schedule_channel_unavailable'); return; }
 
         const murderScheduleList = [];   
         const murderRecruitingList = []; 
@@ -314,6 +389,7 @@ async function updateAnnouncementBoard() {
                 if (month === curMonth && day < curDay) isPast = true;
                 
                 if (isPast) {
+                    diagnostic('schedule_archive_change', {threadId: thread.id, archived: true});
                     thread.edit({ archived: true }).catch(console.error);
                     return; 
                 }
@@ -399,6 +475,7 @@ async function updateAnnouncementBoard() {
                     if (month === curMonth && day < curDay) isPast = true;
 
                     if (!isPast) {
+                        diagnostic('schedule_archive_change', {threadId: thread.id, archived: false});
                         await thread.edit({ archived: false }).catch(console.error);
                         processThread(thread, scheduleArr, recruitingArr);
                     }
@@ -426,7 +503,9 @@ async function updateAnnouncementBoard() {
         otherRecruitingList.sort(sortFunction);
 
         const fetched = await textChannel.messages.fetch({ limit: 100 });
-        if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(() => {});
+        diagnostic('schedule_delete_begin', {updateId, count: fetched.size});
+        if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(error => console.error('schedule_delete_failed', error));
+        diagnostic('schedule_write_begin', {updateId});
 
         const sendSection = async (title, list, color, emptyMsg) => {
             const embed = new EmbedBuilder().setTitle(title).setColor(color);
@@ -475,37 +554,48 @@ async function updateAnnouncementBoard() {
             .setDescription("💡 **수동 새로고침**\n동시 변경으로 인해 일정이 꼬이거나 누락된 경우 아래 버튼을 눌러주세요.");
 
         await textChannel.send({ embeds: [refreshEmbed], components: [refreshRow] });
+        outcome = 'success';
 
     } catch (error) {
+        outcome = 'error';
         console.error("오류 발생:", error);
     } finally {
+        diagnostic('schedule_end', {updateId, reason, outcome, elapsedMs: Date.now() - started, pending: hasPendingScheduleUpdate});
         isUpdatingSchedule = false;
         if (hasPendingScheduleUpdate) {
             hasPendingScheduleUpdate = false;
-            setTimeout(() => updateAnnouncementBoard().catch(console.error), 1000);
+            setTimeout(() => updateAnnouncementBoard('pending_after_previous_update').catch(console.error), 1000);
         }
     }
 }
 
 // ================= [ 스레드 이벤트 리스너 ] =================
-function requestScheduleUpdate() {
+function requestScheduleUpdate(reason) {
+    diagnostic('schedule_debounce', {reason, replacedTimer: Boolean(scheduleUpdateTimer)});
     if (scheduleUpdateTimer) clearTimeout(scheduleUpdateTimer);
-    scheduleUpdateTimer = setTimeout(() => updateAnnouncementBoard().catch(console.error), 3000); 
+    scheduleUpdateTimer = setTimeout(() => { scheduleUpdateTimer = null; updateAnnouncementBoard(reason).catch(console.error); }, 3000); 
 }
 
 const watchChannels = [MAIN_FORUM_ID, OTHER_FORUM_ID];
-function handleThreadEvent(thread) {
+function handleThreadEvent(thread, event = 'unknown', before = null) {
     if (!thread) return;
     const parentId = thread.parentId || thread.parent?.id;
-    if (watchChannels.includes(parentId)) requestScheduleUpdate();
+    if (watchChannels.includes(parentId)) {
+        diagnostic('thread_event', {event, threadId: thread.id, parentId,
+            archivedBefore: before?.archived, archivedAfter: thread.archived, nameChanged: before ? before.name !== thread.name : null});
+        requestScheduleUpdate(`${event}:${thread.id}`);
+    }
 }
 
-client.on('threadCreate', handleThreadEvent);
-client.on('threadUpdate', (b, a) => handleThreadEvent(a));
-client.on('threadDelete', handleThreadEvent);
+client.on('threadCreate', thread => handleThreadEvent(thread, 'threadCreate'));
+client.on('threadUpdate', (b, a) => handleThreadEvent(a, 'threadUpdate', b));
+client.on('threadDelete', thread => handleThreadEvent(thread, 'threadDelete'));
 
 // ================= [ 상호작용 통합 처리 ] =================
 client.on('interactionCreate', async (interaction) => {
+    diagnostic('interaction_received', {interactionId: interaction.id,
+        action: interaction.customId || interaction.commandName || interaction.type,
+        ageMs: Date.now() - interaction.createdTimestamp});
     
     if (interaction.isChatInputCommand()) {
         const { commandName } = interaction;
@@ -905,7 +995,7 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.customId === 'btn_refresh_schedule') {
         await interaction.deferReply({ flags: [ 'Ephemeral' ] }); 
         try {
-            await updateAnnouncementBoard();
+            await updateAnnouncementBoard('manual_refresh');
             await interaction.editReply({ content: '✅ 일정 현황판이 정상적으로 갱신되었습니다!' });
         } catch (error) {
             console.error("수동 갱신 오류:", error);
@@ -1056,4 +1146,10 @@ client.on('messageCreate', async (message) => {
 });
 
 client.on('error', console.error);
-client.login(process.env.DISCORD_TOKEN);
+diagnostic('discord_login_begin');
+client.login(process.env.DISCORD_TOKEN).catch(error => {
+    console.error('discord_login_failed', error);
+    process.exitCode = 1;
+    client.destroy();
+    setImmediate(() => process.exit(1));
+});
