@@ -442,11 +442,11 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
                                        .replace(/^[\]\)/\-,\s|?]+|[\[\(/\-,\s|?]+$/g, '')
                                        .replace(/\s+/g, ' ').trim();
 
-            // Keep the complete entry on one line; the title itself is the link.
+            // Keep each entry on one line with a separate navigation link.
             const linkTitle = cleanedTitle.replace(/[\\\[\]`*_~|]/g, char => '\\' + char) || '제목 없음';
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
-            const newBadge = now - lastTouchTime < 24 * 60 * 60 * 1000 ? ' NEW ⭐' : '';
-            const postData = { sortKey, text: `${displayTitlePrefix}[${linkTitle}](${url})${newBadge}` };
+            const newBadge = now - lastTouchTime < 24 * 60 * 60 * 1000 ? ' ⭐NEW⭐' : '';
+            const postData = { sortKey, text: `${displayTitlePrefix}${linkTitle}${newBadge} [(바로가기)](${url})` };
             if (title.includes("마감") || title.includes("꽉") || title.includes("완료")) {
                 scheduleArr.push(postData);
             } else {
@@ -505,12 +505,9 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
         if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(error => console.error('schedule_delete_failed', error));
         diagnostic('schedule_write_begin', {updateId});
 
-        // ANSI is used for the actual text color, as in the supplied article.
-        // Keep links outside the code block so they remain clickable.
-        const sendSection = async (title, list, ansiColor, emptyMsg) => {
-            const esc = '';
-            const header = '```ansi\n' + `${esc}[1;${ansiColor}m${title}${esc}[0m
-` + '```';
+        // Plain headings and a blank line separate the four schedule categories.
+        const sendSection = async (title, list, emptyMsg) => {
+            const header = `### ${title}`;
             const pages = [];
             let body = '';
             for (const [i, post] of list.entries()) {
@@ -524,17 +521,17 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
             pages.push(body || `*${emptyMsg}*`);
             for (const [i, page] of pages.entries()) {
                 await textChannel.send({
-                    content: i === 0 ? `${header}\n${page}` : page,
+                    content: (i === 0 ? `${header}\n${page}` : page) + (i === pages.length - 1 ? '\n\n\u200B' : ''),
                     allowedMentions: {parse: []},
                     flags: 4 // Suppress link preview cards, retain clickable links.
                 });
             }
         };
 
-        await sendSection('🩸 머미 일정', murderScheduleList, 31, '등록된 일정이 없습니다.');
-        await sendSection('🔎 머미 모집 중', murderRecruitingList, 33, '진행 중인 모집이 없습니다.');
-        await sendSection('🚀 기타 일정', otherScheduleList, 34, '등록된 일정이 없습니다.');
-        await sendSection('🌱 기타 모집 중', otherRecruitingList, 32, '진행 중인 모집이 없습니다.');
+        await sendSection('🩸 머미 일정', murderScheduleList, '등록된 일정이 없습니다.');
+        await sendSection('🔎 머미 모집 중', murderRecruitingList, '진행 중인 모집이 없습니다.');
+        await sendSection('🚀 기타 일정', otherScheduleList, '등록된 일정이 없습니다.');
+        await sendSection('🌱 기타 모집 중', otherRecruitingList, '진행 중인 모집이 없습니다.');
 
         const refreshRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -544,7 +541,7 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
         );
 
         await textChannel.send({
-            content: '-# 각 제목 클릭 시 원본 글로 이동합니다.',
+            content: '-# (바로가기)를 누르면 원본 글로 이동합니다.',
             components: [refreshRow],
             allowedMentions: {parse: []}
         });
