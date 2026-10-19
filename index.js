@@ -505,22 +505,23 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
         if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(error => console.error('schedule_delete_failed', error));
         diagnostic('schedule_write_begin', {updateId});
 
-        // Colored ANSI banners separate categories; entry links stay outside code blocks.
-        const sendSection = async (title, list, ansiColor, emptyMsg) => {
-            const esc = '\u001b';
-            // Match the line width to the title, including Korean and emoji width.
-            const titleWidth = Array.from(new Intl.Segmenter('ko', { granularity: 'grapheme' }).segment(title))
-                .reduce((width, { segment }) => width + (/[^\x00-\x7F]/u.test(segment) ? 2 : segment.length), 0);
-            const padding = '  ';
-            const rule = '━'.repeat(titleWidth + padding.length * 2);
-            const header = '```ansi\n' +
-                `${esc}[1;${ansiColor}m${rule}\n${padding}${title}${padding}\n${rule}${esc}[0m\n` +
-                '```';
+        // Send the image first so the category heading appears above its entries.
+        const sendSection = async (title, list, bannerFile, emptyMsg) => {
+            const bannerPath = diagPath.join(__dirname, 'assets', 'headers', bannerFile);
+            if (diagFs.existsSync(bannerPath)) {
+                await textChannel.send({
+                    files: [{ attachment: bannerPath, name: bannerFile, description: title }],
+                    allowedMentions: { parse: [] }
+                });
+            } else {
+                console.warn('schedule_banner_missing', bannerFile);
+                await textChannel.send({ content: `### ${title}`, allowedMentions: { parse: [] } });
+            }
             const pages = [];
             let body = '';
             for (const [i, post] of list.entries()) {
                 const line = `${i + 1}. ${post.text}`;
-                if (body && header.length + body.length + line.length + 2 > 1950) {
+                if (body && body.length + line.length + 1 > 1900) {
                     pages.push(body);
                     body = '';
                 }
@@ -529,17 +530,17 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
             pages.push(body || `*${emptyMsg}*`);
             for (const [i, page] of pages.entries()) {
                 await textChannel.send({
-                    content: (i === 0 ? `${header}\n${page}` : page) + (i === pages.length - 1 ? '\n\n\u200B' : ''),
-                    allowedMentions: {parse: []},
-                    flags: 4 // Suppress link preview cards, retain clickable links.
+                    content: page + (i === pages.length - 1 ? '\n\n\u200B' : ''),
+                    allowedMentions: { parse: [] },
+                    flags: 4 // Suppress link previews while keeping navigation links clickable.
                 });
             }
         };
 
-        await sendSection('🩸 머미 일정', murderScheduleList, 31, '등록된 일정이 없습니다.');
-        await sendSection('🔎 머미 모집 중', murderRecruitingList, 33, '진행 중인 모집이 없습니다.');
-        await sendSection('🚀 기타 일정', otherScheduleList, 34, '등록된 일정이 없습니다.');
-        await sendSection('🌱 기타 모집 중', otherRecruitingList, 32, '진행 중인 모집이 없습니다.');
+        await sendSection('🩸 머미 일정', murderScheduleList, 'murder-schedule.png', '등록된 일정이 없습니다.');
+        await sendSection('🔎 머미 모집 중', murderRecruitingList, 'murder-recruiting.png', '진행 중인 모집이 없습니다.');
+        await sendSection('🚀 기타 일정', otherScheduleList, 'other-schedule.png', '등록된 일정이 없습니다.');
+        await sendSection('🌱 기타 모집 중', otherRecruitingList, 'other-recruiting.png', '진행 중인 모집이 없습니다.');
 
         const refreshRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
