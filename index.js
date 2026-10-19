@@ -505,9 +505,13 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
         if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(error => console.error('schedule_delete_failed', error));
         diagnostic('schedule_write_begin', {updateId});
 
-        // Plain headings and a blank line separate the four schedule categories.
-        const sendSection = async (title, list, emptyMsg) => {
-            const header = `### ${title}`;
+        // Colored ANSI banners separate categories; entry links stay outside code blocks.
+        const sendSection = async (title, list, ansiColor, emptyMsg) => {
+            const esc = '\u001b';
+            const rule = '━━━━━━━━━━━━━━━━━━━━━━━━';
+            const header = '```ansi\n' +
+                `${esc}[1;${ansiColor}m${rule}\n  ${title}\n${rule}${esc}[0m\n` +
+                '```';
             const pages = [];
             let body = '';
             for (const [i, post] of list.entries()) {
@@ -528,10 +532,10 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
             }
         };
 
-        await sendSection('🩸 머미 일정', murderScheduleList, '등록된 일정이 없습니다.');
-        await sendSection('🔎 머미 모집 중', murderRecruitingList, '진행 중인 모집이 없습니다.');
-        await sendSection('🚀 기타 일정', otherScheduleList, '등록된 일정이 없습니다.');
-        await sendSection('🌱 기타 모집 중', otherRecruitingList, '진행 중인 모집이 없습니다.');
+        await sendSection('🩸 머미 일정', murderScheduleList, 31, '등록된 일정이 없습니다.');
+        await sendSection('🔎 머미 모집 중', murderRecruitingList, 33, '진행 중인 모집이 없습니다.');
+        await sendSection('🚀 기타 일정', otherScheduleList, 34, '등록된 일정이 없습니다.');
+        await sendSection('🌱 기타 모집 중', otherRecruitingList, 32, '진행 중인 모집이 없습니다.');
 
         const refreshRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
