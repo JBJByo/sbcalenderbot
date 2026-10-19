@@ -428,10 +428,10 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
                 sortKey = { month, day, hour, minute, isIlhyeop: false };
 
                 cleanedTitle = cleanedTitle.replace(/(?:월|화|수|목|금|토|일)요일/g, ' ');
-                displayTitlePrefix = `[${month}/${day}] ｜ ${timePrefix}`;
+                displayTitlePrefix = `**[${month}/${day}]** ｜ ${timeMatch ? `\`${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}\` ` : ''}`;
             } else {
                 sortKey = { month: 98, day: 98, hour: 99, minute: 99, isIlhyeop: true }; 
-                displayTitlePrefix = `[일협] ｜ `;
+                displayTitlePrefix = `**[일협]** ｜ `;
             }
 
             cleanedTitle = cleanedTitle.replace(/[\[\(]\s*오프\s*[\]\)]/g, '___OFFLINE___')
@@ -442,13 +442,11 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
                                        .replace(/^[\]\)/\-,\s|?]+|[\[\(/\-,\s|?]+$/g, '')
                                        .replace(/\s+/g, ' ').trim();
 
-            let displayTitle = displayTitlePrefix + cleanedTitle;
+            // Keep the complete entry on one line; the title itself is the link.
+            const linkTitle = cleanedTitle.replace(/[\\\[\]`*_~|]/g, char => '\\' + char) || '제목 없음';
             const lastTouchTime = thread.editedTimestamp || thread.createdTimestamp;
-            if (now - lastTouchTime < 24 * 60 * 60 * 1000) {
-                displayTitle += " ⭐NEW!⭐";
-            }
-
-            const postData = { sortKey, text: `${displayTitle} ([바로가기](${url}))` };
+            const newBadge = now - lastTouchTime < 24 * 60 * 60 * 1000 ? ' NEW ⭐' : '';
+            const postData = { sortKey, text: `${displayTitlePrefix}[${linkTitle}](${url})${newBadge}` };
             if (title.includes("마감") || title.includes("꽉") || title.includes("완료")) {
                 scheduleArr.push(postData);
             } else {
@@ -507,40 +505,36 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
         if (fetched.size > 0) await textChannel.bulkDelete(fetched).catch(error => console.error('schedule_delete_failed', error));
         diagnostic('schedule_write_begin', {updateId});
 
-        const sendSection = async (title, list, color, emptyMsg) => {
-            const embed = new EmbedBuilder().setTitle(title).setColor(color);
-            await textChannel.send({ embeds: [embed] });
-
-            if (list.length > 0) {
-                const content = list.map((post, i) => `${i + 1}. ${post.text}`).join('\n');
-                if (content.length > 1950) {
-                    let currentChunk = "";
-                    for (let i = 0; i < list.length; i++) {
-                        const line = `${i + 1}. ${list[i].text}\n`;
-                        if ((currentChunk + line).length > 1950) {
-                            await textChannel.send(currentChunk.trim());
-                            currentChunk = line;
-                        } else {
-                            currentChunk += line;
-                        }
-                    }
-                    if (currentChunk.trim().length > 0) await textChannel.send(currentChunk.trim());
-                } else {
-                    await textChannel.send(content);
+        // ANSI is used for the actual text color, as in the supplied article.
+        // Keep links outside the code block so they remain clickable.
+        const sendSection = async (title, list, ansiColor, emptyMsg) => {
+            const esc = '';
+            const header = '```ansi\n' + `${esc}[1;${ansiColor}m${title}${esc}[0m
+` + '```';
+            const pages = [];
+            let body = '';
+            for (const [i, post] of list.entries()) {
+                const line = `${i + 1}. ${post.text}`;
+                if (body && header.length + body.length + line.length + 2 > 1950) {
+                    pages.push(body);
+                    body = '';
                 }
-            } else {
-                await textChannel.send(`*${emptyMsg}*`);
+                body += (body ? '\n' : '') + line;
+            }
+            pages.push(body || `*${emptyMsg}*`);
+            for (const [i, page] of pages.entries()) {
+                await textChannel.send({
+                    content: i === 0 ? `${header}\n${page}` : page,
+                    allowedMentions: {parse: []},
+                    flags: 4 // Suppress link preview cards, retain clickable links.
+                });
             }
         };
 
-        await sendSection("🩸  머미 일정", murderScheduleList, 0xFF0000, "등록된 머미 일정이 없습니다. 🥲");
-        await textChannel.send("\u200B");
-        await sendSection("🔎  머미 모집 중", murderRecruitingList, 0xFF0000, "모집 중인 머미 포스팅이 없습니다. 👀");
-        await textChannel.send("\u200B");
-        await sendSection("🚀  기타 일정", otherScheduleList, 0x0099FF, "등록된 기타 일정이 없습니다.");
-        await textChannel.send("\u200B");
-        await sendSection("🔎  기타 모집 중", otherRecruitingList, 0x0099FF, "모집 중인 기타 포스팅이 없습니다.");
-        await textChannel.send("\u200B");
+        await sendSection('🩸 머미 일정', murderScheduleList, 31, '등록된 일정이 없습니다.');
+        await sendSection('🔎 머미 모집 중', murderRecruitingList, 33, '진행 중인 모집이 없습니다.');
+        await sendSection('🚀 기타 일정', otherScheduleList, 34, '등록된 일정이 없습니다.');
+        await sendSection('🌱 기타 모집 중', otherRecruitingList, 32, '진행 중인 모집이 없습니다.');
 
         const refreshRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -549,11 +543,11 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
                 .setStyle(ButtonStyle.Secondary)
         );
 
-        const refreshEmbed = new EmbedBuilder()
-            .setColor(0x95A5A6)
-            .setDescription("💡 **수동 새로고침**\n동시 변경으로 인해 일정이 꼬이거나 누락된 경우 아래 버튼을 눌러주세요.");
-
-        await textChannel.send({ embeds: [refreshEmbed], components: [refreshRow] });
+        await textChannel.send({
+            content: '-# 각 제목 클릭 시 원본 글로 이동합니다.',
+            components: [refreshRow],
+            allowedMentions: {parse: []}
+        });
         outcome = 'success';
 
     } catch (error) {
