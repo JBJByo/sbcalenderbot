@@ -508,9 +508,13 @@ async function updateAnnouncementBoard(reason = 'unspecified') {
         // Colored ANSI banners separate categories; entry links stay outside code blocks.
         const sendSection = async (title, list, ansiColor, emptyMsg) => {
             const esc = '\u001b';
-            const rule = '━━━━━━━━━━━━━━━━━━━━━━━━';
+            // Match the line width to the title, including Korean and emoji width.
+            const titleWidth = Array.from(new Intl.Segmenter('ko', { granularity: 'grapheme' }).segment(title))
+                .reduce((width, { segment }) => width + (/[^\x00-\x7F]/u.test(segment) ? 2 : segment.length), 0);
+            const padding = '  ';
+            const rule = '━'.repeat(titleWidth + padding.length * 2);
             const header = '```ansi\n' +
-                `${esc}[1;${ansiColor}m${rule}\n  ${title}\n${rule}${esc}[0m\n` +
+                `${esc}[1;${ansiColor}m${rule}\n${padding}${title}${padding}\n${rule}${esc}[0m\n` +
                 '```';
             const pages = [];
             let body = '';
